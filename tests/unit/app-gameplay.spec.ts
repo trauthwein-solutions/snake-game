@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Direction, GameState } from '../../src/engine/model';
+import type { ArcadeFeedback } from '../../src/rendering/effects';
 
 type Listener = (event?: Event) => void;
 
@@ -324,6 +325,14 @@ function mountHarness() {
   vi.stubGlobal('document', document);
   const teardown = mountApp(root as unknown as HTMLElement);
   return { document, root, teardown };
+}
+
+function renderFeedback(timestampMs = 0): ArcadeFeedback | undefined {
+  harness.presentationOptions?.render(timestampMs, false);
+  return (
+    harness.render.mock.calls.at(-1)?.[2] as
+      { feedback?: ArcadeFeedback } | undefined
+  )?.feedback;
 }
 
 function expectActionState(
@@ -713,6 +722,120 @@ describe('mountApp gameplay lifecycle', () => {
     expect(harness.render.mock.calls.at(-1)?.[1]?.food).not.toEqual(
       harness.render.mock.calls.at(-1)?.[1]?.snake[0],
     );
+  });
+
+  it('timestamps food feedback at the scored transition and stores the consumed head cell', () => {
+    const { document } = mountHarness();
+    document.defaultView.performance.now.mockReturnValue(1_234.5);
+    document.playButton.click();
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...movingState(state),
+      food: { x: 2, y: 3 },
+      score: 10,
+    }));
+
+    harness.onStep?.();
+
+    const feedback = renderFeedback(1_250);
+    expect(feedback).toEqual({
+      food: {
+        type: 'food',
+        timestampMs: 1_234.5,
+        position: { x: 11, y: 10 },
+      },
+      terminal: null,
+    });
+    expect(Object.isFrozen(feedback)).toBe(true);
+    expect(Object.isFrozen(feedback?.food)).toBe(true);
+    expect(Object.isFrozen(feedback?.food?.position)).toBe(true);
+  });
+
+  it('records no food feedback for ordinary movement, pause, resume, or ready state', () => {
+    const { document } = mountHarness();
+
+    expect(renderFeedback()).toEqual({ food: null, terminal: null });
+    document.playButton.click();
+    document.pauseButton.click();
+    document.pauseButton.click();
+    harness.onStep?.();
+
+    expect(renderFeedback(500)).toEqual({ food: null, terminal: null });
+  });
+
+  it.each(['gameOver', 'completed'] as const)(
+    'timestamps %s feedback only on the transition into terminal state',
+    (status) => {
+      const { document } = mountHarness();
+      document.defaultView.performance.now.mockReturnValue(2_500);
+      document.playButton.click();
+      harness.simulation.mockImplementationOnce((state: GameState) => ({
+        ...state,
+        status,
+      }));
+
+      harness.onStep?.();
+      const transitionFeedback = renderFeedback(2_520);
+      document.defaultView.performance.now.mockReturnValue(9_999);
+      harness.onStep?.();
+
+      expect(transitionFeedback).toEqual({
+        food: null,
+        terminal: { type: 'terminal', timestampMs: 2_500, status },
+      });
+      expect(Object.isFrozen(transitionFeedback)).toBe(true);
+      expect(Object.isFrozen(transitionFeedback?.terminal)).toBe(true);
+      expect(renderFeedback(2_540)).toBe(transitionFeedback);
+      expect(harness.showResult).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('clears prior feedback on Restart, Play Again, and Return to Title', () => {
+    const { document } = mountHarness();
+    document.playButton.click();
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...movingState(state),
+      score: 10,
+    }));
+    harness.onStep?.();
+    expect(renderFeedback(10)?.food).not.toBeNull();
+
+    document.restartButton.click();
+    expect(renderFeedback(20)).toEqual({ food: null, terminal: null });
+
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...state,
+      status: 'gameOver',
+    }));
+    harness.onStep?.();
+    expect(renderFeedback(30)?.terminal).not.toBeNull();
+    dialogElements.playAgainButton?.click();
+    expect(renderFeedback(40)).toEqual({ food: null, terminal: null });
+
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...state,
+      status: 'completed',
+    }));
+    harness.onStep?.();
+    expect(renderFeedback(50)?.terminal).not.toBeNull();
+    dialogElements.returnToTitleButton?.click();
+    expect(renderFeedback(60)).toEqual({ food: null, terminal: null });
+  });
+
+  it('does not mutate feedback through retained callbacks after teardown', () => {
+    const { document, teardown } = mountHarness();
+    document.playButton.click();
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...movingState(state),
+      score: 10,
+    }));
+    harness.onStep?.();
+    const feedbackBeforeTeardown = renderFeedback(100);
+    const retainedStep = harness.onStep;
+
+    teardown();
+    retainedStep?.();
+
+    expect(renderFeedback(200)).toBe(feedbackBeforeTeardown);
   });
 
   it.each([

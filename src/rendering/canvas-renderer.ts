@@ -1,11 +1,21 @@
 import { GRID_HEIGHT, GRID_WIDTH } from '../engine/constants';
 import type { Direction, GameState, GridPosition } from '../engine/model';
-import { foodPulseScale } from './effects';
+import {
+  foodFeedbackFrame,
+  foodPulseScale,
+  terminalFeedbackFrame,
+  type ArcadeFeedback,
+  type FeedbackFrame,
+  type FoodFeedbackEvent,
+  type TerminalFeedbackEvent,
+} from './effects';
 import { paletteForMode, type RendererPalette } from './palette';
 
 export interface RendererOptions {
   readonly colorMode?: 'normal' | 'high-contrast';
   readonly reducedMotion?: boolean;
+  /** Presentation-only events painted against the frame timestamp. */
+  readonly feedback?: ArcadeFeedback;
   /** Injected animation time keeps a rendered frame reproducible in tests. */
   readonly timestampMs?: number;
   /** Defaults to the canvas document's DPR; injectable for deterministic tests. */
@@ -209,6 +219,230 @@ const drawFood = (
   context.restore();
 };
 
+const drawFoodFeedbackRing = (
+  context: CanvasRenderingContext2D,
+  event: FoodFeedbackEvent,
+  frame: FeedbackFrame,
+  cellWidth: number,
+  cellHeight: number,
+  palette: RendererPalette,
+  allowGlow: boolean,
+): void => {
+  if (!frame.active) {
+    return;
+  }
+
+  const centerX = (event.position.x + 0.5) * cellWidth;
+  const centerY = (event.position.y + 0.5) * cellHeight;
+  const unit = Math.min(cellWidth, cellHeight);
+  const ringRadius = unit * 0.42 * frame.scale;
+
+  context.save();
+  context.globalAlpha = frame.alpha;
+  context.strokeStyle = palette.foodFeedback;
+  context.lineWidth = Math.max(1.5, unit * 0.09);
+  context.shadowColor = palette.foodFeedback;
+  context.shadowBlur = allowGlow ? unit * 0.2 : 0;
+  context.beginPath();
+  context.arc(centerX, centerY, ringRadius, 0, Math.PI * 2);
+  context.stroke();
+  context.restore();
+};
+
+interface SparkSegment {
+  readonly startX: number;
+  readonly startY: number;
+  readonly endX: number;
+  readonly endY: number;
+}
+
+const edgeSafeSparkSegment = (
+  centerX: number,
+  centerY: number,
+  directionX: number,
+  directionY: number,
+  innerDistance: number,
+  outerDistance: number,
+  lineWidth: number,
+  width: number,
+  height: number,
+): SparkSegment => {
+  const startX = centerX + directionX * innerDistance;
+  const startY = centerY + directionY * innerDistance;
+  const endX = centerX + directionX * outerDistance;
+  const endY = centerY + directionY * outerDistance;
+  const inset = lineWidth / 2;
+  const isInBounds = (x: number, y: number): boolean =>
+    x >= inset && x <= width - inset && y >= inset && y <= height - inset;
+
+  if (isInBounds(startX, startY) && isInBounds(endX, endY)) {
+    return { startX, startY, endX, endY };
+  }
+
+  const length = outerDistance - innerDistance;
+  if (directionY !== 0) {
+    const tangentOffset = centerX <= width / 2 ? outerDistance : -outerDistance;
+    const tangentCenterX = Math.min(
+      width - inset - length / 2,
+      Math.max(inset + length / 2, centerX + tangentOffset),
+    );
+    const boundaryY = directionY < 0 ? inset : height - inset;
+    return {
+      startX: tangentCenterX - length / 2,
+      startY: boundaryY,
+      endX: tangentCenterX + length / 2,
+      endY: boundaryY,
+    };
+  }
+
+  const tangentOffset = centerY <= height / 2 ? outerDistance : -outerDistance;
+  const tangentCenterY = Math.min(
+    height - inset - length / 2,
+    Math.max(inset + length / 2, centerY + tangentOffset),
+  );
+  const boundaryX = directionX < 0 ? inset : width - inset;
+  return {
+    startX: boundaryX,
+    startY: tangentCenterY - length / 2,
+    endX: boundaryX,
+    endY: tangentCenterY + length / 2,
+  };
+};
+
+const drawFoodFeedbackSparks = (
+  context: CanvasRenderingContext2D,
+  event: FoodFeedbackEvent,
+  frame: FeedbackFrame,
+  cellWidth: number,
+  cellHeight: number,
+  width: number,
+  height: number,
+  palette: RendererPalette,
+): void => {
+  if (!frame.active) {
+    return;
+  }
+
+  const centerX = (event.position.x + 0.5) * cellWidth;
+  const centerY = (event.position.y + 0.5) * cellHeight;
+  const unit = Math.min(cellWidth, cellHeight);
+  const sparkInner = unit * (0.5 + frame.progress * 0.18);
+  const sparkOuter = sparkInner + unit * 0.2;
+  const sparkDirections = [
+    [0, -1],
+    [1, 0],
+    [0, 1],
+    [-1, 0],
+  ] as const;
+  const lineWidth = Math.max(1, unit * 0.07);
+
+  context.save();
+  context.globalAlpha = frame.alpha;
+  context.shadowBlur = 0;
+  context.strokeStyle = palette.feedbackOutline;
+  context.lineWidth = lineWidth;
+  for (const [directionX, directionY] of sparkDirections) {
+    const segment = edgeSafeSparkSegment(
+      centerX,
+      centerY,
+      directionX,
+      directionY,
+      sparkInner,
+      sparkOuter,
+      lineWidth,
+      width,
+      height,
+    );
+    context.beginPath();
+    context.moveTo(segment.startX, segment.startY);
+    context.lineTo(segment.endX, segment.endY);
+    context.stroke();
+  }
+  context.restore();
+};
+
+const drawGameOverFeedback = (
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  inset: number,
+  cornerLength: number,
+): void => {
+  const left = inset;
+  const top = inset;
+  const right = width - inset;
+  const bottom = height - inset;
+
+  context.beginPath();
+  context.moveTo(left, top + cornerLength);
+  context.lineTo(left, top);
+  context.lineTo(left + cornerLength, top);
+  context.moveTo(right - cornerLength, top);
+  context.lineTo(right, top);
+  context.lineTo(right, top + cornerLength);
+  context.moveTo(right, bottom - cornerLength);
+  context.lineTo(right, bottom);
+  context.lineTo(right - cornerLength, bottom);
+  context.moveTo(left + cornerLength, bottom);
+  context.lineTo(left, bottom);
+  context.lineTo(left, bottom - cornerLength);
+
+  const impactSize = cornerLength * 0.7;
+  context.moveTo(left, top);
+  context.lineTo(left + impactSize, top + impactSize);
+  context.moveTo(right, top);
+  context.lineTo(right - impactSize, top + impactSize);
+  context.moveTo(right, bottom);
+  context.lineTo(right - impactSize, bottom - impactSize);
+  context.moveTo(left, bottom);
+  context.lineTo(left + impactSize, bottom - impactSize);
+  context.stroke();
+};
+
+const drawTerminalFeedback = (
+  context: CanvasRenderingContext2D,
+  event: TerminalFeedbackEvent,
+  frame: FeedbackFrame,
+  width: number,
+  height: number,
+  palette: RendererPalette,
+  allowGlow: boolean,
+): void => {
+  if (!frame.active) {
+    return;
+  }
+
+  const shortestSide = Math.min(width, height);
+  const inset = shortestSide * (0.055 + frame.progress * 0.025);
+  const secondaryInset = inset + shortestSide * 0.035;
+
+  context.save();
+  context.globalAlpha = frame.alpha;
+  context.strokeStyle =
+    event.status === 'gameOver'
+      ? palette.gameOverFeedback
+      : palette.completedFeedback;
+  context.lineWidth = Math.max(2, shortestSide * 0.012);
+  context.shadowColor = context.strokeStyle;
+  context.shadowBlur = allowGlow ? shortestSide * 0.018 : 0;
+
+  if (event.status === 'gameOver') {
+    drawGameOverFeedback(context, width, height, inset, shortestSide * 0.16);
+  } else {
+    context.strokeRect(inset, inset, width - inset * 2, height - inset * 2);
+    context.shadowBlur = 0;
+    context.lineWidth = Math.max(1.5, shortestSide * 0.006);
+    context.strokeStyle = palette.feedbackOutline;
+    context.strokeRect(
+      secondaryInset,
+      secondaryInset,
+      width - secondaryInset * 2,
+      height - secondaryInset * 2,
+    );
+  }
+  context.restore();
+};
+
 /**
  * Paints one complete frame without changing GameState. A zero-size canvas is
  * an explicit no-op; a visible canvas without a 2D context throws clearly.
@@ -260,6 +494,43 @@ export const renderGameFrame = (
   const reducedMotion = options.reducedMotion ?? false;
   const allowGlow = !reducedMotion && options.colorMode !== 'high-contrast';
 
+  const timestampMs = options.timestampMs ?? 0;
+  const foodFrame = foodFeedbackFrame(
+    options.feedback?.food,
+    timestampMs,
+    reducedMotion,
+  );
+  const terminalFrame = terminalFeedbackFrame(
+    options.feedback?.terminal,
+    timestampMs,
+    reducedMotion,
+  );
+  if (
+    options.feedback?.terminal !== null &&
+    options.feedback?.terminal !== undefined
+  ) {
+    drawTerminalFeedback(
+      context,
+      options.feedback.terminal,
+      terminalFrame,
+      cssWidth,
+      cssHeight,
+      palette,
+      allowGlow,
+    );
+  }
+  if (options.feedback?.food !== null && options.feedback?.food !== undefined) {
+    drawFoodFeedbackRing(
+      context,
+      options.feedback.food,
+      foodFrame,
+      cellWidth,
+      cellHeight,
+      palette,
+      allowGlow,
+    );
+  }
+
   context.save();
   context.shadowColor = palette.glow;
   context.shadowBlur = allowGlow ? Math.min(cellWidth, cellHeight) * 0.28 : 0;
@@ -299,11 +570,25 @@ export const renderGameFrame = (
       cellWidth,
       cellHeight,
       palette,
-      foodPulseScale(options.timestampMs ?? 0, reducedMotion),
+      foodPulseScale(timestampMs, reducedMotion),
       allowGlow,
     );
   }
 
+  if (options.feedback?.food !== null && options.feedback?.food !== undefined) {
+    drawFoodFeedbackSparks(
+      context,
+      options.feedback.food,
+      foodFrame,
+      cellWidth,
+      cellHeight,
+      cssWidth,
+      cssHeight,
+      palette,
+    );
+  }
+
   context.shadowBlur = 0;
+  context.globalAlpha = 1;
   return { status: 'drawn', cssWidth, cssHeight, devicePixelRatio };
 };
