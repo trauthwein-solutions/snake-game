@@ -15,6 +15,7 @@ class FakeElement {
   readonly children: FakeElement[] = [];
   readonly listeners = new Map<string, Set<Listener>>();
   focus = vi.fn();
+  hidden = false;
   open = false;
 
   constructor(
@@ -72,6 +73,7 @@ class FakeElement {
         return this.ownerDocument.resultTitle;
       if (selector === '[data-score="final"]')
         return this.ownerDocument.finalScore;
+      if (selector === '[data-new-best]') return this.ownerDocument.newBest;
       if (selector === '[data-action="play-again"]') {
         return this.ownerDocument.dialogPlayAgainButton;
       }
@@ -82,6 +84,9 @@ class FakeElement {
 
     if (this.tagName === 'section' && selector === '[data-score="current"]') {
       return this.ownerDocument.scoreValue;
+    }
+    if (this.tagName === 'section' && selector === '[data-score="best"]') {
+      return this.ownerDocument.bestScoreValue;
     }
 
     return null;
@@ -113,6 +118,14 @@ class FakeMediaQueryList {
   }
 }
 
+class FakeStorage {
+  readonly values = new Map<string, string>();
+  readonly getItem = vi.fn((key: string) => this.values.get(key) ?? null);
+  readonly setItem = vi.fn((key: string, value: string) => {
+    this.values.set(key, value);
+  });
+}
+
 class FakeView {
   devicePixelRatio = 1;
   readonly ResizeObserver = class {
@@ -125,6 +138,7 @@ class FakeView {
   readonly requestAnimationFrame = vi.fn(() => 1);
   readonly cancelAnimationFrame = vi.fn();
   readonly matchMedia = vi.fn(() => new FakeMediaQueryList());
+  readonly localStorage = new FakeStorage();
   readonly listeners = new Map<string, Set<Listener>>();
 
   addEventListener(type: string, listener: Listener): void {
@@ -159,9 +173,11 @@ class FakeDocument {
   readonly firstControl = new FakeElement('input', this);
   readonly resultTitle = new FakeElement('h2', this);
   readonly finalScore = new FakeElement('strong', this);
+  readonly newBest = new FakeElement('p', this);
   readonly dialogPlayAgainButton = new FakeElement('button', this);
   readonly dialogReturnToTitleButton = new FakeElement('button', this);
   readonly scoreValue = new FakeElement('dd', this);
+  readonly bestScoreValue = new FakeElement('dd', this);
   readonly listeners = new Map<string, Set<Listener>>();
   readonly shellElements = new Map<string, FakeElement>([
     ['[data-hud]', this.hudMount],
@@ -226,6 +242,7 @@ const harness = vi.hoisted(() => ({
   schedulerStart: vi.fn(),
   showResult: vi.fn(),
   simulation: vi.fn(),
+  updateHudBestScore: vi.fn(),
   updateHudScore: vi.fn(),
 }));
 
@@ -272,6 +289,7 @@ vi.mock('../../src/engine/simulation', () => ({
 
 vi.mock('../../src/ui/hud', () => ({
   createHud: vi.fn(() => new FakeElement('section', new FakeDocument())),
+  updateHudBestScore: harness.updateHudBestScore,
   updateHudScore: harness.updateHudScore,
 }));
 
@@ -319,8 +337,9 @@ function movingState(state: GameState): GameState {
   };
 }
 
-function mountHarness() {
+function mountHarness(configure?: (document: FakeDocument) => void) {
   const document = new FakeDocument();
+  configure?.(document);
   const root = new FakeElement('div', document);
   vi.stubGlobal('document', document);
   const teardown = mountApp(root as unknown as HTMLElement);
@@ -396,6 +415,197 @@ afterEach(() => {
 });
 
 describe('mountApp gameplay lifecycle', () => {
+  it('loads the persisted best once before publishing the initial HUD', () => {
+    const { document } = mountHarness((fakeDocument) => {
+      fakeDocument.defaultView.localStorage.values.set(
+        'snakish.best-score.v1',
+        JSON.stringify({ version: 1, bestScore: 40 }),
+      );
+    });
+
+    expect(document.defaultView.localStorage.getItem).toHaveBeenCalledOnce();
+    expect(harness.updateHudScore).toHaveBeenCalledWith(expect.anything(), 0);
+    expect(harness.updateHudBestScore).toHaveBeenCalledWith(
+      expect.anything(),
+      40,
+    );
+    expect(harness.updateHudBestScore).toHaveBeenCalledOnce();
+  });
+
+  it('does not write for scores below or tied with the persisted best', () => {
+    const { document } = mountHarness((fakeDocument) => {
+      fakeDocument.defaultView.localStorage.values.set(
+        'snakish.best-score.v1',
+        JSON.stringify({ version: 1, bestScore: 20 }),
+      );
+    });
+    document.playButton.click();
+    harness.simulation
+      .mockImplementationOnce((state: GameState) => ({
+        ...movingState(state),
+        score: 10,
+      }))
+      .mockImplementationOnce((state: GameState) => ({
+        ...movingState(state),
+        score: 20,
+      }));
+
+    harness.onStep?.();
+    harness.onStep?.();
+
+    expect(document.defaultView.localStorage.setItem).not.toHaveBeenCalled();
+    expect(harness.updateHudBestScore).toHaveBeenLastCalledWith(
+      expect.anything(),
+      20,
+    );
+  });
+
+  it('publishes and canonically writes once for every strictly reached best', () => {
+    const { document } = mountHarness();
+    document.playButton.click();
+    harness.simulation
+      .mockImplementationOnce((state: GameState) => ({
+        ...movingState(state),
+        score: 10,
+      }))
+      .mockImplementationOnce(movingState)
+      .mockImplementationOnce((state: GameState) => ({
+        ...movingState(state),
+        score: 20,
+      }));
+
+    harness.onStep?.();
+    harness.onStep?.();
+    harness.onStep?.();
+
+    expect(document.defaultView.localStorage.setItem.mock.calls).toEqual([
+      ['snakish.best-score.v1', JSON.stringify({ version: 1, bestScore: 10 })],
+      ['snakish.best-score.v1', JSON.stringify({ version: 1, bestScore: 20 })],
+    ]);
+    expect(harness.updateHudBestScore).toHaveBeenLastCalledWith(
+      expect.anything(),
+      20,
+    );
+  });
+
+  it('retains the in-memory and HUD best when saving throws', () => {
+    const { document } = mountHarness((fakeDocument) => {
+      fakeDocument.defaultView.localStorage.setItem.mockImplementation(() => {
+        throw new Error('blocked');
+      });
+    });
+    document.playButton.click();
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...movingState(state),
+      score: 10,
+    }));
+
+    expect(() => harness.onStep?.()).not.toThrow();
+    document.pauseButton.click();
+
+    expect(harness.updateHudBestScore).toHaveBeenLastCalledWith(
+      expect.anything(),
+      10,
+    );
+  });
+
+  it('mounts and keeps an in-memory best when localStorage access throws', () => {
+    let document!: FakeDocument;
+
+    expect(() => {
+      ({ document } = mountHarness((fakeDocument) => {
+        Object.defineProperty(fakeDocument.defaultView, 'localStorage', {
+          configurable: true,
+          get: () => {
+            throw new Error('blocked');
+          },
+        });
+      }));
+    }).not.toThrow();
+
+    document.playButton.click();
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...movingState(state),
+      score: 10,
+    }));
+    expect(() => harness.onStep?.()).not.toThrow();
+    expect(harness.updateHudBestScore).toHaveBeenLastCalledWith(
+      expect.anything(),
+      10,
+    );
+  });
+
+  it.each([
+    ['gameOver', 40, 10, false],
+    ['gameOver', 40, 40, false],
+    ['gameOver', 40, 50, true],
+    ['completed', 40, 10, false],
+    ['completed', 40, 40, false],
+    ['completed', 40, 50, true],
+  ] as const)(
+    'presents %s from run-start %i with final %i and new-best=%s',
+    (status, startingBest, finalScore, isNewBest) => {
+      const { document } = mountHarness((fakeDocument) => {
+        fakeDocument.defaultView.localStorage.values.set(
+          'snakish.best-score.v1',
+          JSON.stringify({ version: 1, bestScore: startingBest }),
+        );
+      });
+      document.playButton.click();
+      harness.simulation.mockImplementationOnce((state: GameState) => ({
+        ...state,
+        status,
+        score: finalScore,
+      }));
+
+      harness.onStep?.();
+
+      expect(harness.showResult).toHaveBeenCalledWith(
+        status,
+        finalScore,
+        isNewBest,
+      );
+    },
+  );
+
+  it('snapshots current best for Restart, Play Again, and the next title Play', () => {
+    const { document } = mountHarness();
+    document.playButton.click();
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...movingState(state),
+      score: 10,
+    }));
+    harness.onStep?.();
+
+    document.restartButton.click();
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...state,
+      status: 'gameOver',
+      score: 10,
+    }));
+    harness.onStep?.();
+    expect(harness.showResult).toHaveBeenLastCalledWith('gameOver', 10, false);
+
+    dialogElements.playAgainButton?.click();
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...state,
+      status: 'completed',
+      score: 10,
+    }));
+    harness.onStep?.();
+    expect(harness.showResult).toHaveBeenLastCalledWith('completed', 10, false);
+
+    dialogElements.returnToTitleButton?.click();
+    document.playButton.click();
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...state,
+      status: 'gameOver',
+      score: 10,
+    }));
+    harness.onStep?.();
+    expect(harness.showResult).toHaveBeenLastCalledWith('gameOver', 10, false);
+  });
+
   it('focuses enabled Pause exactly once after a successful Play transition', () => {
     const { document } = mountHarness();
 
@@ -831,11 +1041,26 @@ describe('mountApp gameplay lifecycle', () => {
     harness.onStep?.();
     const feedbackBeforeTeardown = renderFeedback(100);
     const retainedStep = harness.onStep;
+    const readsBeforeTeardown =
+      document.defaultView.localStorage.getItem.mock.calls.length;
+    const writesBeforeTeardown =
+      document.defaultView.localStorage.setItem.mock.calls.length;
+    const hudUpdatesBeforeTeardown =
+      harness.updateHudBestScore.mock.calls.length;
 
     teardown();
     retainedStep?.();
 
     expect(renderFeedback(200)).toBe(feedbackBeforeTeardown);
+    expect(document.defaultView.localStorage.getItem).toHaveBeenCalledTimes(
+      readsBeforeTeardown,
+    );
+    expect(document.defaultView.localStorage.setItem).toHaveBeenCalledTimes(
+      writesBeforeTeardown,
+    );
+    expect(harness.updateHudBestScore).toHaveBeenCalledTimes(
+      hudUpdatesBeforeTeardown,
+    );
   });
 
   it.each([
@@ -855,7 +1080,7 @@ describe('mountApp gameplay lifecycle', () => {
 
     expect(harness.schedulerPause).toHaveBeenCalledOnce();
     expect(harness.closeSettings).toHaveBeenCalledOnce();
-    expect(harness.showResult).toHaveBeenCalledWith(status, 30);
+    expect(harness.showResult).toHaveBeenCalledWith(status, 30, true);
     expect(harness.closeSettings.mock.invocationCallOrder[0]).toBeLessThan(
       harness.showResult.mock.invocationCallOrder[0] ?? 0,
     );
@@ -986,12 +1211,16 @@ describe('gameplay UI helpers', () => {
       document.settingsButton as unknown as HTMLButtonElement,
     );
 
-    dialogs.showResult(status, 40);
+    dialogs.showResult(status, 40, true);
 
     expect(document.resultTitle.textContent).toBe(title);
     expect(document.finalScore.textContent).toBe('40');
+    expect(document.newBest.hidden).toBe(false);
     expect(document.dialogPlayAgainButton.focus).toHaveBeenCalledOnce();
     expect(dialogs.gameOverDialog.open).toBe(true);
+
+    dialogs.showResult(status, 40, false);
+    expect(document.newBest.hidden).toBe(true);
   });
 
   it('closes settings narrowly and removes every dialog listener on teardown', async () => {
@@ -1032,10 +1261,10 @@ describe('gameplay UI helpers', () => {
     expect(unhandledCancel.defaultPrevented).toBe(false);
   });
 
-  it('updates only the current HUD score', async () => {
+  it('updates current and Best HUD scores independently', async () => {
     const document = new FakeDocument();
     const hud = new FakeElement('section', document);
-    const { updateHudScore } =
+    const { updateHudBestScore, updateHudScore } =
       await vi.importActual<typeof import('../../src/ui/hud')>(
         '../../src/ui/hud',
       );
@@ -1043,5 +1272,11 @@ describe('gameplay UI helpers', () => {
     updateHudScore(hud as unknown as HTMLElement, 10);
 
     expect(document.scoreValue.textContent).toBe('10');
+    expect(document.bestScoreValue.textContent).toBe('');
+
+    updateHudBestScore(hud as unknown as HTMLElement, 40);
+
+    expect(document.scoreValue.textContent).toBe('10');
+    expect(document.bestScoreValue.textContent).toBe('40');
   });
 });

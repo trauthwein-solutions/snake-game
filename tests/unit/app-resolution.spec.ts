@@ -63,6 +63,7 @@ class FakeElement {
   innerHTML = '';
   readonly children: FakeElement[] = [];
   readonly eventListeners = new Map<string, Set<EventListener>>();
+  hidden = false;
   open = false;
 
   constructor(
@@ -127,6 +128,9 @@ class FakeElement {
       if (selector === '[data-score="final"]') {
         return this.ownerDocument.finalScore;
       }
+      if (selector === '[data-new-best]') {
+        return this.ownerDocument.newBest;
+      }
       if (selector === '[data-action="play-again"]') {
         return this.ownerDocument.playAgainButton;
       }
@@ -136,6 +140,9 @@ class FakeElement {
     }
     if (this.tagName === 'section' && selector === '[data-score="current"]') {
       return this.ownerDocument.scoreValue;
+    }
+    if (this.tagName === 'section' && selector === '[data-score="best"]') {
+      return this.ownerDocument.bestScoreValue;
     }
     return null;
   }
@@ -170,6 +177,10 @@ class FakeView {
   readonly ResizeObserver = FakeResizeObserver;
   readonly cancelAnimationFrame = vi.fn();
   readonly requestAnimationFrame = vi.fn();
+  readonly localStorage = {
+    getItem: vi.fn(() => null),
+    setItem: vi.fn(),
+  };
 
   readonly matchMedia = vi.fn((media: string) => {
     const query = new FakeMediaQueryList(
@@ -211,9 +222,11 @@ class FakeDocument {
   readonly firstControl = new FakeElement('input', this);
   readonly resultTitle = new FakeElement('h2', this);
   readonly finalScore = new FakeElement('strong', this);
+  readonly newBest = new FakeElement('p', this);
   readonly playAgainButton = new FakeElement('button', this);
   readonly returnToTitleButton = new FakeElement('button', this);
   readonly scoreValue = new FakeElement('dd', this);
+  readonly bestScoreValue = new FakeElement('dd', this);
   readonly eventListeners = new Map<string, Set<EventListener>>();
 
   createElement(tagName: string): FakeElement {

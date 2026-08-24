@@ -15,9 +15,14 @@ import {
 } from './rendering/effects';
 import { createPresentationLoop } from './rendering/presentation-loop';
 import { createFixedStepScheduler } from './timing/fixed-step-scheduler';
+import {
+  loadBestScore,
+  saveBestScore,
+  type BestScoreStorage,
+} from './storage/best-score';
 import { announce, createAnnouncer } from './ui/announcer';
 import { createDialogs } from './ui/dialogs';
-import { createHud, updateHudScore } from './ui/hud';
+import { createHud, updateHudBestScore, updateHudScore } from './ui/hud';
 
 const enteredTerminalStatus = (
   previousStatus: GameState['status'],
@@ -123,7 +128,17 @@ export function mountApp(root: HTMLElement): () => void {
   root.replaceChildren(shell);
   root.dataset.ready = 'true';
 
+  const view = canvas.ownerDocument.defaultView;
+  let bestScoreStorage: BestScoreStorage | undefined;
+  try {
+    bestScoreStorage = view?.localStorage;
+  } catch {
+    bestScoreStorage = undefined;
+  }
+
   let state: GameState = createInitialState();
+  let bestScore = loadBestScore(bestScoreStorage);
+  let runStartingBest: number | undefined;
   let feedback: ArcadeFeedback = EMPTY_ARCADE_FEEDBACK;
   let tornDown = false;
 
@@ -175,6 +190,7 @@ export function mountApp(root: HTMLElement): () => void {
       : 'button';
     pauseButton.textContent = state.status === 'paused' ? 'Resume' : 'Pause';
     updateHudScore(hud, state.score);
+    updateHudBestScore(hud, bestScore);
   };
 
   updateStateView();
@@ -208,7 +224,6 @@ export function mountApp(root: HTMLElement): () => void {
     onPauseToggle: recordPauseIntent,
   });
 
-  const view = canvas.ownerDocument.defaultView;
   const reducedMotionQuery = view?.matchMedia(
     '(prefers-reduced-motion: reduce)',
   );
@@ -303,6 +318,10 @@ export function mountApp(root: HTMLElement): () => void {
       const previousStatus: GameState['status'] = state.status;
       state = advanceSimulation(state, Math.random);
       const scoreIncreased = state.score > previousScore;
+      if (state.score > bestScore) {
+        bestScore = state.score;
+        saveBestScore(bestScoreStorage, bestScore);
+      }
       const terminalStatus = enteredTerminalStatus(
         previousStatus,
         state.status,
@@ -328,7 +347,11 @@ export function mountApp(root: HTMLElement): () => void {
           scheduler.pause();
         }
         dialogs.closeSettings();
-        dialogs.showResult(terminalStatus, state.score);
+        dialogs.showResult(
+          terminalStatus,
+          state.score,
+          runStartingBest !== undefined && state.score > runStartingBest,
+        );
         announce(
           announcer,
           terminalStatus === 'completed'
@@ -388,6 +411,7 @@ export function mountApp(root: HTMLElement): () => void {
     }
 
     getGameplayView();
+    runStartingBest = bestScore;
     state = applyCommand(state, { type: 'start' });
     updateStateView();
     pauseButton.focus();
@@ -402,6 +426,7 @@ export function mountApp(root: HTMLElement): () => void {
     }
 
     getGameplayView();
+    runStartingBest = bestScore;
     clearFeedback();
     state = applyCommand(state, { type: 'restart' });
     state = applyCommand(state, { type: 'start' });
@@ -427,6 +452,7 @@ export function mountApp(root: HTMLElement): () => void {
     }
     clearFeedback();
     state = applyCommand(state, { type: 'restart' });
+    runStartingBest = undefined;
     dialogs.closeResult();
     updateStateView();
     presentationLoop.redraw();

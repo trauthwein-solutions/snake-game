@@ -27,3 +27,13 @@ export function updateHudScore(hud: HTMLElement, score: number): void {
 
   scoreValue.textContent = String(score);
 }
+
+export function updateHudBestScore(hud: HTMLElement, bestScore: number): void {
+  const bestScoreValue = hud.querySelector<HTMLElement>('[data-score="best"]');
+
+  if (bestScoreValue === null) {
+    throw new Error('SNAKISH best score display could not be found.');
+  }
+
+  bestScoreValue.textContent = String(bestScore);
+}
