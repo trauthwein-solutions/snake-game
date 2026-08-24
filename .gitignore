@@ -1,0 +1,18 @@
+node_modules/
+dist/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+
+# Tooling and editor state
+*.local
+.DS_Store
+.idea/
+.vscode/
