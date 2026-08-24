@@ -6,12 +6,20 @@ const presentationLoop = vi.hoisted(() => ({
   syncMotionPreference: vi.fn(),
 }));
 
+const inputController = vi.hoisted(() => ({
+  teardown: vi.fn(),
+}));
+
 vi.mock('../../src/rendering/canvas-renderer', () => ({
   renderGameFrame: vi.fn(),
 }));
 
 vi.mock('../../src/rendering/presentation-loop', () => ({
   createPresentationLoop: vi.fn(() => presentationLoop),
+}));
+
+vi.mock('../../src/input/input-controller', () => ({
+  createInputController: vi.fn(() => inputController.teardown),
 }));
 
 import { mountApp } from '../../src/app';
@@ -86,6 +94,9 @@ class FakeElement {
       if (selector === '[data-render-target="arena"]') {
         return this.ownerDocument.canvas;
       }
+      if (selector === '[data-touch-controls]') {
+        return this.ownerDocument.touchControlsMount;
+      }
     }
     if (this.tagName === 'dialog') {
       if (selector === '.icon-button') {
@@ -158,6 +169,7 @@ class FakeDocument {
   readonly hudMount = new FakeElement('div', this);
   readonly settingsButton = new FakeElement('button', this);
   readonly canvas = new FakeElement('canvas', this);
+  readonly touchControlsMount = new FakeElement('div', this);
   readonly closeButton = new FakeElement('button', this);
   readonly firstControl = new FakeElement('input', this);
 
@@ -221,5 +233,6 @@ describe('mountApp resolution lifecycle', () => {
     expect(reducedMotionQuery?.listeners.size).toBe(0);
     expect(FakeResizeObserver.instances[0]?.disconnect).toHaveBeenCalledOnce();
     expect(presentationLoop.stop).toHaveBeenCalledOnce();
+    expect(inputController.teardown).toHaveBeenCalledOnce();
   });
 });
