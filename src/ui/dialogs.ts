@@ -1,6 +1,17 @@
+import type { GameStatus } from '../engine/model';
+
 interface GameDialogs {
   settingsDialog: HTMLDialogElement;
   gameOverDialog: HTMLDialogElement;
+  playAgainButton: HTMLButtonElement;
+  returnToTitleButton: HTMLButtonElement;
+  showResult(
+    status: Extract<GameStatus, 'gameOver' | 'completed'>,
+    score: number,
+  ): void;
+  closeSettings(): void;
+  closeResult(): void;
+  teardown(): void;
 }
 
 function createSetting(name: string, checked = false): string {
@@ -14,9 +25,10 @@ function createSetting(name: string, checked = false): string {
   `;
 }
 
-function createSettingsDialog(
-  settingsButton: HTMLButtonElement,
-): HTMLDialogElement {
+function createSettingsDialog(settingsButton: HTMLButtonElement): {
+  dialog: HTMLDialogElement;
+  teardown: () => void;
+} {
   const dialog = document.createElement('dialog');
   dialog.className = 'dialog-card';
   dialog.id = 'settings-dialog';
@@ -44,14 +56,25 @@ function createSettingsDialog(
     throw new Error('Settings dialog controls could not be created.');
   }
 
-  settingsButton.addEventListener('click', () => {
+  const openSettings = (): void => {
     dialog.showModal();
     firstControl.focus();
-  });
-  closeButton.addEventListener('click', () => dialog.close());
-  dialog.addEventListener('close', () => settingsButton.focus());
+  };
+  const closeSettings = (): void => dialog.close();
+  const restoreSettingsFocus = (): void => settingsButton.focus();
 
-  return dialog;
+  settingsButton.addEventListener('click', openSettings);
+  closeButton.addEventListener('click', closeSettings);
+  dialog.addEventListener('close', restoreSettingsFocus);
+
+  return {
+    dialog,
+    teardown: () => {
+      settingsButton.removeEventListener('click', openSettings);
+      closeButton.removeEventListener('click', closeSettings);
+      dialog.removeEventListener('close', restoreSettingsFocus);
+    },
+  };
 }
 
 function createGameOverDialog(): HTMLDialogElement {
@@ -81,8 +104,61 @@ function createGameOverDialog(): HTMLDialogElement {
 }
 
 export function createDialogs(settingsButton: HTMLButtonElement): GameDialogs {
+  const settings = createSettingsDialog(settingsButton);
+  const gameOverDialog = createGameOverDialog();
+  const resultTitle =
+    gameOverDialog.querySelector<HTMLElement>('#game-over-title');
+  const finalScore = gameOverDialog.querySelector<HTMLElement>(
+    '[data-score="final"]',
+  );
+  const playAgainButton = gameOverDialog.querySelector<HTMLButtonElement>(
+    '[data-action="play-again"]',
+  );
+  const returnToTitleButton = gameOverDialog.querySelector<HTMLButtonElement>(
+    '[data-action="return-to-title"]',
+  );
+
+  if (
+    resultTitle === null ||
+    finalScore === null ||
+    playAgainButton === null ||
+    returnToTitleButton === null
+  ) {
+    throw new Error('SNAKISH result dialog controls could not be created.');
+  }
+
+  const preventResultCancel = (event: Event): void => {
+    event.preventDefault();
+  };
+  gameOverDialog.addEventListener('cancel', preventResultCancel);
+
   return {
-    settingsDialog: createSettingsDialog(settingsButton),
-    gameOverDialog: createGameOverDialog(),
+    settingsDialog: settings.dialog,
+    gameOverDialog,
+    playAgainButton,
+    returnToTitleButton,
+    showResult: (status, score) => {
+      resultTitle.textContent =
+        status === 'completed' ? 'Grid complete' : 'Game over';
+      finalScore.textContent = String(score);
+      if (!gameOverDialog.open) {
+        gameOverDialog.showModal();
+      }
+      playAgainButton.focus();
+    },
+    closeSettings: () => {
+      if (settings.dialog.open) {
+        settings.dialog.close();
+      }
+    },
+    closeResult: () => {
+      if (gameOverDialog.open) {
+        gameOverDialog.close();
+      }
+    },
+    teardown: () => {
+      settings.teardown();
+      gameOverDialog.removeEventListener('cancel', preventResultCancel);
+    },
   };
 }

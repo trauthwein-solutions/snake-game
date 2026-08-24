@@ -1,12 +1,17 @@
-import { createInitialState } from './engine/game-engine';
-import type { Direction } from './engine/model';
+import { applyCommand, createInitialState } from './engine/game-engine';
+import type { Direction, GameState } from './engine/model';
+import {
+  advanceSimulation,
+  tickIntervalForSpeedTier,
+} from './engine/simulation';
 import { createInputController } from './input/input-controller';
 import { createTouchControls } from './input/touch-controls';
 import { renderGameFrame } from './rendering/canvas-renderer';
 import { createPresentationLoop } from './rendering/presentation-loop';
-import { createAnnouncer } from './ui/announcer';
+import { createFixedStepScheduler } from './timing/fixed-step-scheduler';
+import { announce, createAnnouncer } from './ui/announcer';
 import { createDialogs } from './ui/dialogs';
-import { createHud } from './ui/hud';
+import { createHud, updateHudScore } from './ui/hud';
 
 export function mountApp(root: HTMLElement): () => void {
   const shell = document.createElement('main');
@@ -60,6 +65,12 @@ export function mountApp(root: HTMLElement): () => void {
   const settingsButton = shell.querySelector<HTMLButtonElement>(
     '[data-action="settings"]',
   );
+  const playButton = shell.querySelector<HTMLButtonElement>(
+    '[data-action="play"]',
+  );
+  const restartButton = shell.querySelector<HTMLButtonElement>(
+    '[data-action="restart"]',
+  );
   const canvas = shell.querySelector<HTMLCanvasElement>(
     '[data-render-target="arena"]',
   );
@@ -70,28 +81,52 @@ export function mountApp(root: HTMLElement): () => void {
   if (
     hudMount === null ||
     settingsButton === null ||
+    playButton === null ||
+    restartButton === null ||
     canvas === null ||
     touchControlsMount === null
   ) {
     throw new Error('SNAKISH interface controls could not be created.');
   }
 
-  hudMount.replaceWith(createHud());
+  const hud = createHud();
+  hudMount.replaceWith(hud);
   const touchControls = createTouchControls(canvas.ownerDocument);
   touchControlsMount.replaceWith(touchControls.element);
-  const { settingsDialog, gameOverDialog } = createDialogs(settingsButton);
-  shell.append(settingsDialog, gameOverDialog, createAnnouncer());
+  const dialogs = createDialogs(settingsButton);
+  const announcer = createAnnouncer();
+  shell.append(dialogs.settingsDialog, dialogs.gameOverDialog, announcer);
 
   root.replaceChildren(shell);
   root.dataset.ready = 'true';
 
+  let state: GameState = createInitialState();
+  let tornDown = false;
+
+  const updateStateView = (): void => {
+    const head = state.snake[0];
+    root.dataset.gameStatus = state.status;
+    root.dataset.gameScore = String(state.score);
+    root.dataset.gameHead = head === undefined ? '' : `${head.x},${head.y}`;
+    updateHudScore(hud, state.score);
+  };
+
+  updateStateView();
+
   const recordDirection = (direction: Direction): void => {
+    if (tornDown) {
+      return;
+    }
     root.dataset.inputDirection = direction;
     root.dataset.inputDirectionCount = String(
       Number(root.dataset.inputDirectionCount ?? 0) + 1,
     );
+    state = applyCommand(state, { type: 'turn', direction });
   };
   const recordPauseIntent = (): void => {
+    if (tornDown) {
+      return;
+    }
     root.dataset.pauseIntent = 'toggle';
     root.dataset.pauseIntentCount = String(
       Number(root.dataset.pauseIntentCount ?? 0) + 1,
@@ -105,7 +140,6 @@ export function mountApp(root: HTMLElement): () => void {
     onPauseToggle: recordPauseIntent,
   });
 
-  const initialState = createInitialState();
   const view = canvas.ownerDocument.defaultView;
   const reducedMotionQuery = view?.matchMedia(
     '(prefers-reduced-motion: reduce)',
@@ -114,7 +148,7 @@ export function mountApp(root: HTMLElement): () => void {
     cancelAnimationFrame: view?.cancelAnimationFrame.bind(view),
     prefersReducedMotion: () => reducedMotionQuery?.matches === true,
     render: (timestampMs, reducedMotion) => {
-      renderGameFrame(canvas, initialState, { timestampMs, reducedMotion });
+      renderGameFrame(canvas, state, { timestampMs, reducedMotion });
     },
     requestAnimationFrame: view?.requestAnimationFrame.bind(view),
   });
@@ -161,7 +195,128 @@ export function mountApp(root: HTMLElement): () => void {
   view?.addEventListener('resize', handleResize);
   armResolutionQuery();
 
+  const getGameplayView = (): Window => {
+    if (
+      view === null ||
+      view === undefined ||
+      typeof view.performance?.now !== 'function' ||
+      typeof view.setTimeout !== 'function' ||
+      typeof view.clearTimeout !== 'function'
+    ) {
+      throw new Error(
+        'SNAKISH cannot start because browser timing APIs are unavailable.',
+      );
+    }
+
+    return view;
+  };
+
+  const scheduler = createFixedStepScheduler({
+    now: () => {
+      return getGameplayView().performance.now();
+    },
+    schedule: (callback, delayMs) => {
+      return getGameplayView().setTimeout(callback, delayMs);
+    },
+    cancel: (timerId) => {
+      getGameplayView().clearTimeout(timerId);
+    },
+    getIntervalMs: () => tickIntervalForSpeedTier(state.speedTier),
+    onStep: () => {
+      if (tornDown || state.status !== 'running') {
+        return;
+      }
+
+      const previousScore = state.score;
+      state = advanceSimulation(state, Math.random);
+      updateStateView();
+      presentationLoop.redraw();
+
+      if (state.score > previousScore) {
+        announce(announcer, `Score ${state.score}.`);
+      }
+
+      if (state.status === 'gameOver' || state.status === 'completed') {
+        if (scheduler.isRunning()) {
+          scheduler.pause();
+        }
+        dialogs.closeSettings();
+        dialogs.showResult(state.status, state.score);
+        announce(
+          announcer,
+          state.status === 'completed'
+            ? `Grid complete. Final score ${state.score}.`
+            : `Game over. Final score ${state.score}.`,
+        );
+      }
+    },
+  });
+
+  const startReadyGame = (): void => {
+    if (tornDown || state.status !== 'ready') {
+      return;
+    }
+
+    getGameplayView();
+    state = applyCommand(state, { type: 'start' });
+    updateStateView();
+    presentationLoop.redraw();
+    scheduler.start();
+    announce(announcer, 'Game started.');
+  };
+
+  const restartAndStart = (): void => {
+    if (tornDown) {
+      return;
+    }
+
+    getGameplayView();
+    state = applyCommand(state, { type: 'restart' });
+    state = applyCommand(state, { type: 'start' });
+    dialogs.closeResult();
+    updateStateView();
+    presentationLoop.redraw();
+
+    if (scheduler.isRunning()) {
+      scheduler.reset();
+    } else {
+      scheduler.start();
+    }
+    announce(announcer, 'Game restarted.');
+  };
+
+  const returnToTitle = (): void => {
+    if (tornDown) {
+      return;
+    }
+
+    if (scheduler.isRunning()) {
+      scheduler.pause();
+    }
+    state = applyCommand(state, { type: 'restart' });
+    dialogs.closeResult();
+    updateStateView();
+    presentationLoop.redraw();
+    announce(announcer, 'Returned to title.');
+    playButton.focus();
+  };
+
+  playButton.addEventListener('click', startReadyGame);
+  restartButton.addEventListener('click', restartAndStart);
+  dialogs.playAgainButton.addEventListener('click', restartAndStart);
+  dialogs.returnToTitleButton.addEventListener('click', returnToTitle);
+
   return () => {
+    if (tornDown) {
+      return;
+    }
+    tornDown = true;
+    playButton.removeEventListener('click', startReadyGame);
+    restartButton.removeEventListener('click', restartAndStart);
+    dialogs.playAgainButton.removeEventListener('click', restartAndStart);
+    dialogs.returnToTitleButton.removeEventListener('click', returnToTitle);
+    dialogs.teardown();
+    scheduler.dispose();
     teardownInput();
     presentationLoop.stop();
     resizeObserver?.disconnect();
