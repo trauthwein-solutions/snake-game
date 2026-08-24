@@ -123,8 +123,6 @@ export const applyCommand = (
     case 'tick':
       return advance(state, command);
     case 'restart':
-      return state.status === 'gameOver' || state.status === 'completed'
-        ? createInitialState()
-        : state;
+      return createInitialState();
   }
 };
