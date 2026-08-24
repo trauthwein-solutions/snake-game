@@ -7,6 +7,7 @@ type Listener = (event?: Event) => void;
 class FakeElement {
   className = '';
   dataset: Record<string, string> = {};
+  disabled = false;
   id = '';
   innerHTML = '';
   textContent = '';
@@ -31,6 +32,10 @@ class FakeElement {
   }
 
   click(): void {
+    if (this.tagName === 'button' && this.disabled) {
+      return;
+    }
+
     for (const listener of [...(this.listeners.get('click') ?? [])]) {
       listener();
     }
@@ -130,14 +135,22 @@ class FakeView {
   removeEventListener(type: string, listener: Listener): void {
     this.listeners.get(type)?.delete(listener);
   }
+
+  dispatch(type: string): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) {
+      listener(new Event(type));
+    }
+  }
 }
 
 class FakeDocument {
+  hidden = false;
   readonly defaultView = new FakeView();
   readonly shell = new FakeElement('main', this);
   readonly hudMount = new FakeElement('div', this);
   readonly settingsButton = new FakeElement('button', this);
   readonly playButton = new FakeElement('button', this);
+  readonly pauseButton = new FakeElement('button', this);
   readonly restartButton = new FakeElement('button', this);
   readonly canvas = new FakeElement('canvas', this);
   readonly touchControlsMount = new FakeElement('div', this);
@@ -148,10 +161,12 @@ class FakeDocument {
   readonly dialogPlayAgainButton = new FakeElement('button', this);
   readonly dialogReturnToTitleButton = new FakeElement('button', this);
   readonly scoreValue = new FakeElement('dd', this);
+  readonly listeners = new Map<string, Set<Listener>>();
   readonly shellElements = new Map<string, FakeElement>([
     ['[data-hud]', this.hudMount],
     ['[data-action="settings"]', this.settingsButton],
     ['[data-action="play"]', this.playButton],
+    ['[data-action="pause"]', this.pauseButton],
     ['[data-action="restart"]', this.restartButton],
     ['[data-render-target="arena"]', this.canvas],
     ['[data-touch-controls]', this.touchControlsMount],
@@ -159,6 +174,22 @@ class FakeDocument {
 
   createElement(tagName: string): FakeElement {
     return tagName === 'main' ? this.shell : new FakeElement(tagName, this);
+  }
+
+  addEventListener(type: string, listener: Listener): void {
+    const listeners = this.listeners.get(type) ?? new Set<Listener>();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: Listener): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  dispatch(type: string): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) {
+      listener(new Event(type));
+    }
   }
 }
 
@@ -189,6 +220,7 @@ const harness = vi.hoisted(() => ({
   schedulerDispose: vi.fn(),
   schedulerPause: vi.fn(),
   schedulerReset: vi.fn(),
+  schedulerOperations: [] as string[],
   schedulerRunning: false,
   schedulerStart: vi.fn(),
   showResult: vi.fn(),
@@ -294,15 +326,40 @@ function mountHarness() {
   return { document, root, teardown };
 }
 
+function expectActionState(
+  document: FakeDocument,
+  expected: {
+    pauseClass: string;
+    pauseDisabled: boolean;
+    pauseLabel: string;
+    playClass: string;
+    playDisabled: boolean;
+  },
+): void {
+  expect(document.playButton.disabled).toBe(expected.playDisabled);
+  expect(document.playButton.className).toBe(expected.playClass);
+  expect(document.pauseButton.disabled).toBe(expected.pauseDisabled);
+  expect(document.pauseButton.className).toBe(expected.pauseClass);
+  expect(document.pauseButton.textContent).toBe(expected.pauseLabel);
+  expect(document.restartButton.disabled).toBe(false);
+  expect(document.settingsButton.disabled).toBe(false);
+}
+
 beforeEach(() => {
   harness.schedulerRunning = false;
   harness.schedulerStart.mockImplementation(() => {
+    harness.schedulerOperations.push('start');
     harness.schedulerRunning = true;
   });
   harness.schedulerPause.mockImplementation(() => {
+    harness.schedulerOperations.push('pause');
     harness.schedulerRunning = false;
   });
+  harness.schedulerReset.mockImplementation(() => {
+    harness.schedulerOperations.push('reset');
+  });
   harness.schedulerDispose.mockImplementation(() => {
+    harness.schedulerOperations.push('dispose');
     harness.schedulerRunning = false;
   });
   harness.createScheduler.mockImplementation(
@@ -318,6 +375,7 @@ beforeEach(() => {
     },
   );
   harness.simulation.mockImplementation(movingState);
+  harness.schedulerOperations.length = 0;
 });
 
 afterEach(() => {
@@ -329,6 +387,216 @@ afterEach(() => {
 });
 
 describe('mountApp gameplay lifecycle', () => {
+  it('focuses enabled Pause exactly once after a successful Play transition', () => {
+    const { document } = mountHarness();
+
+    document.playButton.click();
+
+    expect(document.playButton.disabled).toBe(true);
+    expect(document.playButton.focus).not.toHaveBeenCalled();
+    expect(document.pauseButton.disabled).toBe(false);
+    expect(document.pauseButton.focus).toHaveBeenCalledOnce();
+
+    document.playButton.dispatchEvent(new Event('click'));
+    harness.onStep?.();
+    document.hidden = true;
+    document.dispatch('visibilitychange');
+    document.hidden = false;
+    document.pauseButton.click();
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...state,
+      status: 'gameOver',
+    }));
+    harness.onStep?.();
+    document.defaultView.dispatch('blur');
+
+    expect(document.playButton.focus).not.toHaveBeenCalled();
+    expect(document.pauseButton.focus).toHaveBeenCalledOnce();
+  });
+
+  it('synchronizes ready, running, and paused action semantics and visual priority', () => {
+    const { document, root } = mountHarness();
+
+    expectActionState(document, {
+      playDisabled: false,
+      playClass: 'button button--primary',
+      pauseDisabled: true,
+      pauseClass: 'button',
+      pauseLabel: 'Pause',
+    });
+    document.pauseButton.click();
+    expect(root.dataset.gameStatus).toBe('ready');
+    expect(root.dataset.pauseIntentCount).toBeUndefined();
+    expect(harness.schedulerOperations).toEqual([]);
+
+    document.playButton.click();
+    expectActionState(document, {
+      playDisabled: true,
+      playClass: 'button',
+      pauseDisabled: false,
+      pauseClass: 'button button--primary',
+      pauseLabel: 'Pause',
+    });
+    document.pauseButton.click();
+    expect(root.dataset.gameStatus).toBe('paused');
+    expectActionState(document, {
+      playDisabled: true,
+      playClass: 'button',
+      pauseDisabled: false,
+      pauseClass: 'button button--primary',
+      pauseLabel: 'Resume',
+    });
+    expect(harness.schedulerOperations).toEqual(['start', 'pause']);
+    expect(harness.presentationRedraw).toHaveBeenCalled();
+    expect(harness.announce).toHaveBeenCalledWith(
+      expect.anything(),
+      'Game paused.',
+    );
+
+    harness.inputOptions?.onPauseToggle();
+    expect(root.dataset.gameStatus).toBe('running');
+    expectActionState(document, {
+      playDisabled: true,
+      playClass: 'button',
+      pauseDisabled: false,
+      pauseClass: 'button button--primary',
+      pauseLabel: 'Pause',
+    });
+    expect(root.dataset.pauseIntentCount).toBe('2');
+    expect(harness.schedulerOperations).toEqual(['start', 'pause', 'start']);
+    expect(harness.schedulerReset).not.toHaveBeenCalled();
+    expect(harness.announce).toHaveBeenCalledWith(
+      expect.anything(),
+      'Game resumed.',
+    );
+  });
+
+  it.each(['gameOver', 'completed'] as const)(
+    'gives dialog actions control in the %s state',
+    (status) => {
+      const { document, root } = mountHarness();
+      document.playButton.click();
+      harness.simulation.mockImplementationOnce((state: GameState) => ({
+        ...state,
+        status,
+      }));
+
+      harness.onStep?.();
+
+      expect(root.dataset.gameStatus).toBe(status);
+      expectActionState(document, {
+        playDisabled: true,
+        playClass: 'button',
+        pauseDisabled: true,
+        pauseClass: 'button',
+        pauseLabel: 'Pause',
+      });
+    },
+  );
+
+  it('preserves a queued turn across pause and rejects replacement input while paused', () => {
+    const { document, root } = mountHarness();
+    document.playButton.click();
+    harness.inputOptions?.onDirection('up');
+
+    document.pauseButton.click();
+    harness.inputOptions?.onDirection('left');
+    harness.onStep?.();
+    expect(harness.simulation).not.toHaveBeenCalled();
+    expect(root.dataset.inputDirection).toBe('left');
+    expect(root.dataset.inputDirectionCount).toBe('2');
+
+    document.pauseButton.click();
+    harness.onStep?.();
+
+    expect(harness.simulation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'running',
+        pendingDirection: 'up',
+      }),
+      Math.random,
+    );
+  });
+
+  it('auto-pauses for hidden and blur once, never resumes on restoration, and reports the cause', () => {
+    const { document, root } = mountHarness();
+    document.playButton.click();
+    document.hidden = true;
+
+    document.dispatch('visibilitychange');
+    document.dispatch('visibilitychange');
+    document.defaultView.dispatch('blur');
+
+    expect(root.dataset.gameStatus).toBe('paused');
+    expect(document.pauseButton.textContent).toBe('Resume');
+    expect(harness.schedulerOperations).toEqual(['start', 'pause']);
+    expect(harness.announce).toHaveBeenCalledWith(
+      expect.anything(),
+      'Game paused because the tab was hidden.',
+    );
+
+    document.hidden = false;
+    document.dispatch('visibilitychange');
+    document.defaultView.dispatch('focus');
+    expect(root.dataset.gameStatus).toBe('paused');
+    expect(harness.schedulerOperations).toEqual(['start', 'pause']);
+
+    document.pauseButton.click();
+    document.defaultView.dispatch('blur');
+    document.defaultView.dispatch('blur');
+    document.hidden = true;
+    document.dispatch('visibilitychange');
+    expect(root.dataset.gameStatus).toBe('paused');
+    expect(harness.schedulerOperations).toEqual([
+      'start',
+      'pause',
+      'start',
+      'pause',
+    ]);
+    expect(harness.announce).toHaveBeenCalledWith(
+      expect.anything(),
+      'Game paused because the window lost focus.',
+    );
+  });
+
+  it('keeps manual and automatic pause intent inert in terminal states while retaining diagnostics', () => {
+    const { document, root } = mountHarness();
+    document.playButton.click();
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...state,
+      status: 'gameOver',
+    }));
+    harness.onStep?.();
+
+    document.pauseButton.click();
+    harness.inputOptions?.onPauseToggle();
+    document.hidden = true;
+    document.dispatch('visibilitychange');
+    document.defaultView.dispatch('blur');
+
+    expect(root.dataset.gameStatus).toBe('gameOver');
+    expect(root.dataset.pauseIntentCount).toBe('1');
+    expect(harness.schedulerOperations).toEqual(['start', 'pause']);
+  });
+
+  it('restarts a manually paused run as a fresh running scheduler interval', () => {
+    const { document, root } = mountHarness();
+    document.playButton.click();
+    document.pauseButton.click();
+
+    document.restartButton.click();
+
+    expect(root.dataset).toMatchObject({
+      gameStatus: 'running',
+      gameScore: '0',
+      gameHead: '10,10',
+    });
+    expect(document.pauseButton.textContent).toBe('Pause');
+    expect(harness.schedulerOperations).toEqual(['start', 'pause', 'start']);
+    expect(harness.schedulerReset).not.toHaveBeenCalled();
+    expect(harness.simulation).not.toHaveBeenCalled();
+  });
+
   it('renders and publishes current state, then applies turns before the next scheduled step', () => {
     const { document, root } = mountHarness();
 
@@ -550,11 +818,20 @@ describe('mountApp gameplay lifecycle', () => {
     const { document, root, teardown } = mountHarness();
     document.playButton.click();
     const step = harness.onStep;
+    const pauseIntent = harness.inputOptions?.onPauseToggle;
+    const blur = [...(document.defaultView.listeners.get('blur') ?? [])][0];
+    const visibility = [
+      ...(document.listeners.get('visibilitychange') ?? []),
+    ][0];
     const statusBeforeTeardown = root.dataset.gameStatus;
 
     teardown();
     teardown();
     step?.();
+    pauseIntent?.();
+    blur?.();
+    visibility?.();
+    document.pauseButton.click();
     document.restartButton.click();
     dialogElements.playAgainButton?.click();
 
@@ -564,7 +841,11 @@ describe('mountApp gameplay lifecycle', () => {
     expect(harness.presentationStop).toHaveBeenCalledOnce();
     expect(harness.simulation).not.toHaveBeenCalled();
     expect(root.dataset.gameStatus).toBe(statusBeforeTeardown);
+    expect(root.dataset.pauseIntentCount).toBeUndefined();
     expect(harness.schedulerStart).toHaveBeenCalledOnce();
+    expect(document.defaultView.listeners.get('blur')?.size).toBe(0);
+    expect(document.listeners.get('visibilitychange')?.size).toBe(0);
+    expect(document.pauseButton.listeners.get('click')?.size).toBe(0);
   });
 });
 

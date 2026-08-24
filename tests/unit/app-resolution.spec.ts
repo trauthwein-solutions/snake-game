@@ -101,6 +101,9 @@ class FakeElement {
       if (selector === '[data-action="play"]') {
         return this.ownerDocument.playButton;
       }
+      if (selector === '[data-action="pause"]') {
+        return this.ownerDocument.pauseButton;
+      }
       if (selector === '[data-action="restart"]') {
         return this.ownerDocument.restartButton;
       }
@@ -195,10 +198,12 @@ class FakeView {
 }
 
 class FakeDocument {
+  hidden = false;
   readonly defaultView = new FakeView();
   readonly hudMount = new FakeElement('div', this);
   readonly settingsButton = new FakeElement('button', this);
   readonly playButton = new FakeElement('button', this);
+  readonly pauseButton = new FakeElement('button', this);
   readonly restartButton = new FakeElement('button', this);
   readonly canvas = new FakeElement('canvas', this);
   readonly touchControlsMount = new FakeElement('div', this);
@@ -209,9 +214,26 @@ class FakeDocument {
   readonly playAgainButton = new FakeElement('button', this);
   readonly returnToTitleButton = new FakeElement('button', this);
   readonly scoreValue = new FakeElement('dd', this);
+  readonly eventListeners = new Map<string, Set<EventListener>>();
 
   createElement(tagName: string): FakeElement {
     return new FakeElement(tagName, this);
+  }
+
+  addEventListener(type: string, listener: EventListener): void {
+    const listeners = this.eventListeners.get(type) ?? new Set<EventListener>();
+    listeners.add(listener);
+    this.eventListeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    this.eventListeners.get(type)?.delete(listener);
+  }
+
+  dispatch(type: string): void {
+    for (const listener of [...(this.eventListeners.get(type) ?? [])]) {
+      listener();
+    }
   }
 }
 
@@ -238,6 +260,9 @@ describe('mountApp resolution lifecycle', () => {
     expect(reducedMotionQuery?.listeners.size).toBe(1);
     expect(resolutionQuery?.media).toBe('(resolution: 1dppx)');
     expect(document.defaultView.eventListeners.get('resize')?.size).toBe(1);
+    expect(document.defaultView.eventListeners.get('blur')?.size).toBe(1);
+    expect(document.eventListeners.get('visibilitychange')?.size).toBe(1);
+    expect(document.pauseButton.eventListeners.get('click')?.size).toBe(1);
 
     document.defaultView.devicePixelRatio = 2;
     document.defaultView.dispatch('resize');
@@ -260,16 +285,41 @@ describe('mountApp resolution lifecycle', () => {
     expect(presentationLoop.redraw).toHaveBeenCalledTimes(3);
 
     const activeResolutionQuery = document.defaultView.mediaQueries.at(-1);
+    const retainedBlur = [
+      ...(document.defaultView.eventListeners.get('blur') ?? []),
+    ][0];
+    const retainedVisibility = [
+      ...(document.eventListeners.get('visibilitychange') ?? []),
+    ][0];
+    const retainedPause = [
+      ...(document.pauseButton.eventListeners.get('click') ?? []),
+    ][0];
+    unmount();
     unmount();
     document.defaultView.dispatch('resize');
     activeResolutionQuery?.dispatchChange();
+    retainedBlur?.();
+    retainedVisibility?.();
+    retainedPause?.();
 
     expect(presentationLoop.redraw).toHaveBeenCalledTimes(3);
     expect(document.defaultView.eventListeners.get('resize')?.size).toBe(0);
+    expect(document.defaultView.eventListeners.get('blur')?.size).toBe(0);
+    expect(document.eventListeners.get('visibilitychange')?.size).toBe(0);
+    expect(document.pauseButton.eventListeners.get('click')?.size).toBe(0);
     expect(activeResolutionQuery?.listeners.size).toBe(0);
     expect(reducedMotionQuery?.listeners.size).toBe(0);
     expect(FakeResizeObserver.instances[0]?.disconnect).toHaveBeenCalledOnce();
     expect(presentationLoop.stop).toHaveBeenCalledOnce();
     expect(inputController.teardown).toHaveBeenCalledOnce();
+
+    const remount = mountApp(root as unknown as HTMLElement);
+    expect(document.defaultView.eventListeners.get('blur')?.size).toBe(1);
+    expect(document.eventListeners.get('visibilitychange')?.size).toBe(1);
+    expect(document.pauseButton.eventListeners.get('click')?.size).toBe(1);
+    remount();
+    expect(document.defaultView.eventListeners.get('blur')?.size).toBe(0);
+    expect(document.eventListeners.get('visibilitychange')?.size).toBe(0);
+    expect(document.pauseButton.eventListeners.get('click')?.size).toBe(0);
   });
 });
