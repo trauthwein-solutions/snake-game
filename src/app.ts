@@ -68,6 +68,9 @@ export function mountApp(root: HTMLElement): () => void {
   const playButton = shell.querySelector<HTMLButtonElement>(
     '[data-action="play"]',
   );
+  const pauseButton = shell.querySelector<HTMLButtonElement>(
+    '[data-action="pause"]',
+  );
   const restartButton = shell.querySelector<HTMLButtonElement>(
     '[data-action="restart"]',
   );
@@ -82,6 +85,7 @@ export function mountApp(root: HTMLElement): () => void {
     hudMount === null ||
     settingsButton === null ||
     playButton === null ||
+    pauseButton === null ||
     restartButton === null ||
     canvas === null ||
     touchControlsMount === null
@@ -105,9 +109,21 @@ export function mountApp(root: HTMLElement): () => void {
 
   const updateStateView = (): void => {
     const head = state.snake[0];
+    const playIsActionable = state.status === 'ready';
+    const pauseIsActionable =
+      state.status === 'running' || state.status === 'paused';
     root.dataset.gameStatus = state.status;
     root.dataset.gameScore = String(state.score);
     root.dataset.gameHead = head === undefined ? '' : `${head.x},${head.y}`;
+    playButton.disabled = !playIsActionable;
+    playButton.className = playIsActionable
+      ? 'button button--primary'
+      : 'button';
+    pauseButton.disabled = !pauseIsActionable;
+    pauseButton.className = pauseIsActionable
+      ? 'button button--primary'
+      : 'button';
+    pauseButton.textContent = state.status === 'paused' ? 'Resume' : 'Pause';
     updateHudScore(hud, state.score);
   };
 
@@ -123,6 +139,7 @@ export function mountApp(root: HTMLElement): () => void {
     );
     state = applyCommand(state, { type: 'turn', direction });
   };
+  let applyManualPauseIntent = (): void => {};
   const recordPauseIntent = (): void => {
     if (tornDown) {
       return;
@@ -131,6 +148,7 @@ export function mountApp(root: HTMLElement): () => void {
     root.dataset.pauseIntentCount = String(
       Number(root.dataset.pauseIntentCount ?? 0) + 1,
     );
+    applyManualPauseIntent();
   };
   const teardownInput = createInputController({
     keyboardTarget: canvas.ownerDocument,
@@ -252,6 +270,49 @@ export function mountApp(root: HTMLElement): () => void {
     },
   });
 
+  const pauseRunningGame = (announcement: string): void => {
+    if (tornDown || state.status !== 'running') {
+      return;
+    }
+
+    state = applyCommand(state, { type: 'pause' });
+    scheduler.pause();
+    updateStateView();
+    presentationLoop.redraw();
+    announce(announcer, announcement);
+  };
+
+  const resumePausedGame = (): void => {
+    if (tornDown || state.status !== 'paused') {
+      return;
+    }
+
+    getGameplayView();
+    state = applyCommand(state, { type: 'resume' });
+    scheduler.start();
+    updateStateView();
+    presentationLoop.redraw();
+    announce(announcer, 'Game resumed.');
+  };
+
+  applyManualPauseIntent = (): void => {
+    if (state.status === 'running') {
+      pauseRunningGame('Game paused.');
+    } else if (state.status === 'paused') {
+      resumePausedGame();
+    }
+  };
+
+  const gameplayDocument = canvas.ownerDocument;
+  const handleVisibilityChange = (): void => {
+    if (gameplayDocument.hidden) {
+      pauseRunningGame('Game paused because the tab was hidden.');
+    }
+  };
+  const handleBlur = (): void => {
+    pauseRunningGame('Game paused because the window lost focus.');
+  };
+
   const startReadyGame = (): void => {
     if (tornDown || state.status !== 'ready') {
       return;
@@ -260,6 +321,7 @@ export function mountApp(root: HTMLElement): () => void {
     getGameplayView();
     state = applyCommand(state, { type: 'start' });
     updateStateView();
+    pauseButton.focus();
     presentationLoop.redraw();
     scheduler.start();
     announce(announcer, 'Game started.');
@@ -302,9 +364,12 @@ export function mountApp(root: HTMLElement): () => void {
   };
 
   playButton.addEventListener('click', startReadyGame);
+  pauseButton.addEventListener('click', recordPauseIntent);
   restartButton.addEventListener('click', restartAndStart);
   dialogs.playAgainButton.addEventListener('click', restartAndStart);
   dialogs.returnToTitleButton.addEventListener('click', returnToTitle);
+  gameplayDocument.addEventListener('visibilitychange', handleVisibilityChange);
+  view?.addEventListener('blur', handleBlur);
 
   return () => {
     if (tornDown) {
@@ -312,6 +377,7 @@ export function mountApp(root: HTMLElement): () => void {
     }
     tornDown = true;
     playButton.removeEventListener('click', startReadyGame);
+    pauseButton.removeEventListener('click', recordPauseIntent);
     restartButton.removeEventListener('click', restartAndStart);
     dialogs.playAgainButton.removeEventListener('click', restartAndStart);
     dialogs.returnToTitleButton.removeEventListener('click', returnToTitle);
@@ -321,6 +387,11 @@ export function mountApp(root: HTMLElement): () => void {
     presentationLoop.stop();
     resizeObserver?.disconnect();
     view?.removeEventListener('resize', handleResize);
+    view?.removeEventListener('blur', handleBlur);
+    gameplayDocument.removeEventListener(
+      'visibilitychange',
+      handleVisibilityChange,
+    );
     resolutionQuery?.removeEventListener('change', handleResolutionChange);
     reducedMotionQuery?.removeEventListener(
       'change',

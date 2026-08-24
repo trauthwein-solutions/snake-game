@@ -148,8 +148,11 @@ test('allows activate-then-steer from retained game button focus', async ({
   const app = page.locator('#app');
 
   const play = page.getByRole('button', { name: 'Play', exact: true });
+  const pause = page.getByRole('button', { name: 'Pause', exact: true });
   await play.click();
-  await expect(play).toBeFocused();
+  await expect(play).toBeDisabled();
+  await expect(play).not.toBeFocused();
+  await expect(pause).toBeFocused();
   await page.keyboard.press('ArrowRight');
   await expect(app).toHaveAttribute('data-input-direction', 'right');
 
