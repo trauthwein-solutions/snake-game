@@ -74,8 +74,27 @@ describe('SNAKISH game engine', () => {
       expect(resumed.status).toBe('running');
     });
 
+    it.each(['ready', 'running', 'paused'] as const)(
+      'restarts a noncanonical %s state to the stable initial state',
+      (status) => {
+        const before = runningState({
+          status,
+          snake: [position(9, 9), position(8, 9)],
+          food: position(1, 1),
+          score: 120,
+          speedTier: 2,
+          lastAcceptedDirection: 'down',
+          pendingDirection: 'left',
+        });
+
+        expect(applyCommand(before, { type: 'restart' })).toEqual(
+          createInitialState(),
+        );
+      },
+    );
+
     it.each(['gameOver', 'completed'] as const)(
-      'restarts a %s run to the stable initial state',
+      'restarts a terminal %s state to the stable initial state',
       (status) => {
         const finished = runningState({
           status,
@@ -92,6 +111,35 @@ describe('SNAKISH game engine', () => {
         );
       },
     );
+
+    it('keeps restart ready until start is applied separately', () => {
+      const restarted = applyCommand(runningState(), { type: 'restart' });
+
+      expect(restarted.status).toBe('ready');
+      expect(applyCommand(restarted, { type: 'start' }).status).toBe('running');
+    });
+
+    it('returns deeply fresh state without mutating the caller', () => {
+      const before = createInitialState();
+      const snapshot = structuredClone(before);
+
+      const first = applyCommand(before, { type: 'restart' });
+      const second = applyCommand(before, { type: 'restart' });
+
+      expect(before).toEqual(snapshot);
+      expect(first).toEqual(createInitialState());
+      expect(second).toEqual(createInitialState());
+      expect(first).not.toBe(before);
+      expect(second).not.toBe(first);
+      expect(first.snake).not.toBe(before.snake);
+      expect(second.snake).not.toBe(first.snake);
+      first.snake.forEach((segment, index) => {
+        expect(segment).not.toBe(before.snake[index]);
+        expect(segment).not.toBe(second.snake[index]);
+      });
+      expect(first.food).not.toBe(before.food);
+      expect(second.food).not.toBe(first.food);
+    });
   });
 
   describe('direction changes', () => {
