@@ -8,6 +8,7 @@ interface GameDialogs {
   showResult(
     status: Extract<GameStatus, 'gameOver' | 'completed'>,
     score: number,
+    isNewBest: boolean,
   ): void;
   closeSettings(): void;
   closeResult(): void;
@@ -111,6 +112,7 @@ export function createDialogs(settingsButton: HTMLButtonElement): GameDialogs {
   const finalScore = gameOverDialog.querySelector<HTMLElement>(
     '[data-score="final"]',
   );
+  const newBest = gameOverDialog.querySelector<HTMLElement>('[data-new-best]');
   const playAgainButton = gameOverDialog.querySelector<HTMLButtonElement>(
     '[data-action="play-again"]',
   );
@@ -121,6 +123,7 @@ export function createDialogs(settingsButton: HTMLButtonElement): GameDialogs {
   if (
     resultTitle === null ||
     finalScore === null ||
+    newBest === null ||
     playAgainButton === null ||
     returnToTitleButton === null
   ) {
@@ -137,10 +140,11 @@ export function createDialogs(settingsButton: HTMLButtonElement): GameDialogs {
     gameOverDialog,
     playAgainButton,
     returnToTitleButton,
-    showResult: (status, score) => {
+    showResult: (status, score, isNewBest) => {
       resultTitle.textContent =
         status === 'completed' ? 'Grid complete' : 'Game over';
       finalScore.textContent = String(score);
+      newBest.hidden = !isNewBest;
       if (!gameOverDialog.open) {
         gameOverDialog.showModal();
       }

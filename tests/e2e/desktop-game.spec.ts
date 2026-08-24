@@ -166,7 +166,11 @@ test('shows and tears down the actual completed-result dialog helper', async ({
       createDialogs: (settingsButton: HTMLButtonElement) => {
         settingsDialog: HTMLDialogElement;
         gameOverDialog: HTMLDialogElement;
-        showResult: (status: 'gameOver' | 'completed', score: number) => void;
+        showResult: (
+          status: 'gameOver' | 'completed',
+          score: number,
+          isNewBest: boolean,
+        ) => void;
         closeResult: () => void;
         closeSettings: () => void;
         teardown: () => void;
@@ -211,7 +215,7 @@ test('shows and tears down the actual completed-result dialog helper', async ({
         delete evidenceWindow.__snakishDialogEvidence;
       },
     };
-    dialogs.showResult('completed', 400);
+    dialogs.showResult('completed', 400, false);
   });
 
   const fixture = page.locator('#completed-dialog-fixture');
