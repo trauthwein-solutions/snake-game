@@ -366,6 +366,96 @@ h1 {
   display: none !important;
 }
 
+.app-shell[data-high-contrast='true'] {
+  --surface-raised: #000;
+  --line: #fff;
+  --line-bright: #fff;
+  --text-muted: #fff;
+  --cyan: #00ffff;
+  --lime: #ffff00;
+  --focus: #00ffff;
+  color: #fff;
+  background: #000;
+}
+
+.app-shell[data-high-contrast='true'] h1,
+.app-shell[data-high-contrast='true'] .scoreboard dd,
+.app-shell[data-high-contrast='true'] .final-score strong,
+.app-shell[data-high-contrast='true'] .new-best {
+  text-shadow: none;
+}
+
+.app-shell[data-high-contrast='true'] .scoreboard,
+.app-shell[data-high-contrast='true'] .arena-frame,
+.app-shell[data-high-contrast='true'] .arena-canvas,
+.app-shell[data-high-contrast='true'] .dialog-card,
+.app-shell[data-high-contrast='true'] .setting,
+.app-shell[data-high-contrast='true'] .button,
+.app-shell[data-high-contrast='true'] .icon-button,
+.app-shell[data-high-contrast='true'] .dpad__button {
+  border-color: #fff;
+  color: #fff;
+  background: #000;
+  box-shadow: none;
+}
+
+.app-shell[data-high-contrast='true'] .button--primary {
+  border-color: #00ffff;
+  color: #000;
+  background: #00ffff;
+}
+
+.app-shell[data-high-contrast='true'] .button:not(:disabled):hover,
+.app-shell[data-high-contrast='true'] .icon-button:not(:disabled):hover,
+.app-shell[data-high-contrast='true'] .dpad__button:not(:disabled):hover {
+  border-color: #00ffff;
+  color: #000;
+  background: #00ffff;
+}
+
+.app-shell[data-high-contrast='true'] button:focus-visible,
+.app-shell[data-high-contrast='true'] input:focus-visible {
+  outline-color: #00ffff;
+}
+
+.app-shell[data-high-contrast='true'] button:disabled,
+.app-shell[data-high-contrast='true'] button:disabled:hover,
+.app-shell[data-high-contrast='true'] button:disabled:focus,
+.app-shell[data-high-contrast='true'] button:disabled:active {
+  border-color: #999;
+  color: #bbb;
+  background: #242424;
+  cursor: not-allowed;
+}
+
+.app-shell[data-high-contrast='true'] .scoreboard dd,
+.app-shell[data-high-contrast='true'] .final-score strong,
+.app-shell[data-high-contrast='true'] .new-best {
+  color: #ffff00;
+}
+
+.app-shell[data-high-contrast='true'] .setting:focus-within {
+  border-color: #00ffff;
+}
+
+.app-shell[data-high-contrast='true'] .setting input {
+  accent-color: #00ffff;
+}
+
+.app-shell[data-high-contrast='true'] .dialog-card::backdrop {
+  background: rgb(0 0 0 / 92%);
+}
+
+.app-shell[data-reduced-motion='true'],
+.app-shell[data-reduced-motion='true'] *,
+.app-shell[data-reduced-motion='true'] *::before,
+.app-shell[data-reduced-motion='true'] *::after {
+  scroll-behavior: auto;
+  transition-duration: 0.01ms;
+  animation-duration: 0.01ms;
+  animation-iteration-count: 1;
+}
+
 @media (max-width: 30rem) {
   .app-shell {
     padding: 0.75rem;
@@ -395,14 +485,5 @@ h1 {
   .arena-frame {
     width: min(100%, 50vh);
     margin-inline: auto;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
   }
 }

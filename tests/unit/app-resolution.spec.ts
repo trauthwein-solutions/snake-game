@@ -57,6 +57,7 @@ class FakeMediaQueryList {
 }
 
 class FakeElement {
+  checked = false;
   className = '';
   dataset: Record<string, string> = {};
   id = '';
@@ -122,6 +123,18 @@ class FakeElement {
       if (selector === 'input') {
         return this.ownerDocument.firstControl;
       }
+      if (selector === '#setting-music') {
+        return this.ownerDocument.musicControl;
+      }
+      if (selector === '#setting-sound-effects') {
+        return this.ownerDocument.soundEffectsControl;
+      }
+      if (selector === '#setting-reduced-motion') {
+        return this.ownerDocument.reducedMotionControl;
+      }
+      if (selector === '#setting-high-contrast') {
+        return this.ownerDocument.highContrastControl;
+      }
       if (selector === '#game-over-title') {
         return this.ownerDocument.resultTitle;
       }
@@ -178,7 +191,10 @@ class FakeView {
   readonly cancelAnimationFrame = vi.fn();
   readonly requestAnimationFrame = vi.fn();
   readonly localStorage = {
-    getItem: vi.fn(() => null),
+    getItem: vi.fn((key: string) => {
+      void key;
+      return null;
+    }),
     setItem: vi.fn(),
   };
 
@@ -219,7 +235,11 @@ class FakeDocument {
   readonly canvas = new FakeElement('canvas', this);
   readonly touchControlsMount = new FakeElement('div', this);
   readonly closeButton = new FakeElement('button', this);
-  readonly firstControl = new FakeElement('input', this);
+  readonly musicControl = new FakeElement('input', this);
+  readonly soundEffectsControl = new FakeElement('input', this);
+  readonly reducedMotionControl = new FakeElement('input', this);
+  readonly highContrastControl = new FakeElement('input', this);
+  readonly firstControl = this.musicControl;
   readonly resultTitle = new FakeElement('h2', this);
   readonly finalScore = new FakeElement('strong', this);
   readonly newBest = new FakeElement('p', this);
@@ -276,6 +296,16 @@ describe('mountApp resolution lifecycle', () => {
     expect(document.defaultView.eventListeners.get('blur')?.size).toBe(1);
     expect(document.eventListeners.get('visibilitychange')?.size).toBe(1);
     expect(document.pauseButton.eventListeners.get('click')?.size).toBe(1);
+    expect(document.musicControl.eventListeners.get('change')?.size).toBe(1);
+    expect(
+      document.soundEffectsControl.eventListeners.get('change')?.size,
+    ).toBe(1);
+    expect(
+      document.reducedMotionControl.eventListeners.get('change')?.size,
+    ).toBe(1);
+    expect(
+      document.highContrastControl.eventListeners.get('change')?.size,
+    ).toBe(1);
 
     document.defaultView.devicePixelRatio = 2;
     document.defaultView.dispatch('resize');
@@ -307,6 +337,11 @@ describe('mountApp resolution lifecycle', () => {
     const retainedPause = [
       ...(document.pauseButton.eventListeners.get('click') ?? []),
     ][0];
+    const retainedHighContrast = [
+      ...(document.highContrastControl.eventListeners.get('change') ?? []),
+    ][0];
+    const retainedReducedMotion = [...(reducedMotionQuery?.listeners ?? [])][0];
+    const datasetsBeforeUnmount = { ...root.dataset };
     unmount();
     unmount();
     document.defaultView.dispatch('resize');
@@ -314,12 +349,28 @@ describe('mountApp resolution lifecycle', () => {
     retainedBlur?.();
     retainedVisibility?.();
     retainedPause?.();
+    document.highContrastControl.checked = true;
+    retainedHighContrast?.();
+    reducedMotionQuery!.matches = false;
+    retainedReducedMotion?.();
 
     expect(presentationLoop.redraw).toHaveBeenCalledTimes(3);
     expect(document.defaultView.eventListeners.get('resize')?.size).toBe(0);
     expect(document.defaultView.eventListeners.get('blur')?.size).toBe(0);
     expect(document.eventListeners.get('visibilitychange')?.size).toBe(0);
     expect(document.pauseButton.eventListeners.get('click')?.size).toBe(0);
+    expect(document.musicControl.eventListeners.get('change')?.size).toBe(0);
+    expect(
+      document.soundEffectsControl.eventListeners.get('change')?.size,
+    ).toBe(0);
+    expect(
+      document.reducedMotionControl.eventListeners.get('change')?.size,
+    ).toBe(0);
+    expect(
+      document.highContrastControl.eventListeners.get('change')?.size,
+    ).toBe(0);
+    expect(document.defaultView.localStorage.setItem).not.toHaveBeenCalled();
+    expect(root.dataset).toEqual(datasetsBeforeUnmount);
     expect(activeResolutionQuery?.listeners.size).toBe(0);
     expect(reducedMotionQuery?.listeners.size).toBe(0);
     expect(FakeResizeObserver.instances[0]?.disconnect).toHaveBeenCalledOnce();
@@ -330,9 +381,16 @@ describe('mountApp resolution lifecycle', () => {
     expect(document.defaultView.eventListeners.get('blur')?.size).toBe(1);
     expect(document.eventListeners.get('visibilitychange')?.size).toBe(1);
     expect(document.pauseButton.eventListeners.get('click')?.size).toBe(1);
+    expect(document.musicControl.eventListeners.get('change')?.size).toBe(1);
+    expect(
+      document.defaultView.localStorage.getItem.mock.calls.filter(
+        ([key]) => key === 'snakish.preferences.v1',
+      ),
+    ).toHaveLength(2);
     remount();
     expect(document.defaultView.eventListeners.get('blur')?.size).toBe(0);
     expect(document.eventListeners.get('visibilitychange')?.size).toBe(0);
     expect(document.pauseButton.eventListeners.get('click')?.size).toBe(0);
+    expect(document.musicControl.eventListeners.get('change')?.size).toBe(0);
   });
 });
