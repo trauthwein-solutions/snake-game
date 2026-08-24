@@ -18,4 +18,6 @@ export const SCORE_PER_FOOD = 10;
 /** Score required to enter each zero-based speed tier. */
 export const SPEED_TIER_THRESHOLDS = [0, 50, 100, 200] as const;
 
+export const SPEED_TIER_INTERVAL_MS = [180, 155, 130, 110] as const;
+
 export const MAX_SPEED_TIER = SPEED_TIER_THRESHOLDS.length - 1;
