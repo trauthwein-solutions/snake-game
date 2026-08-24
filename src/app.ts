@@ -1,8 +1,11 @@
+import { createInitialState } from './engine/game-engine';
+import { renderGameFrame } from './rendering/canvas-renderer';
+import { createPresentationLoop } from './rendering/presentation-loop';
 import { createAnnouncer } from './ui/announcer';
 import { createDialogs } from './ui/dialogs';
 import { createHud } from './ui/hud';
 
-export function mountApp(root: HTMLElement): void {
+export function mountApp(root: HTMLElement): () => void {
   const shell = document.createElement('main');
   shell.className = 'app-shell';
   shell.innerHTML = `
@@ -16,15 +19,15 @@ export function mountApp(root: HTMLElement): void {
       <div data-hud></div>
 
       <div class="arena-frame">
-        <div
-          class="arena-placeholder"
+        <canvas
+          class="arena-canvas"
           role="img"
           aria-label="SNAKISH game arena"
           aria-describedby="arena-instructions"
           data-render-target="arena"
         >
-          <span aria-hidden="true">Arena ready</span>
-        </div>
+          SNAKISH game arena. Use the nearby instructions to play.
+        </canvas>
       </div>
 
       <p class="instructions" id="arena-instructions">
@@ -52,8 +55,11 @@ export function mountApp(root: HTMLElement): void {
   const settingsButton = shell.querySelector<HTMLButtonElement>(
     '[data-action="settings"]',
   );
+  const canvas = shell.querySelector<HTMLCanvasElement>(
+    '[data-render-target="arena"]',
+  );
 
-  if (hudMount === null || settingsButton === null) {
+  if (hudMount === null || settingsButton === null || canvas === null) {
     throw new Error('SNAKISH interface controls could not be created.');
   }
 
@@ -63,4 +69,71 @@ export function mountApp(root: HTMLElement): void {
 
   root.replaceChildren(shell);
   root.dataset.ready = 'true';
+
+  const initialState = createInitialState();
+  const view = canvas.ownerDocument.defaultView;
+  const reducedMotionQuery = view?.matchMedia(
+    '(prefers-reduced-motion: reduce)',
+  );
+  const presentationLoop = createPresentationLoop({
+    cancelAnimationFrame: view?.cancelAnimationFrame.bind(view),
+    prefersReducedMotion: () => reducedMotionQuery?.matches === true,
+    render: (timestampMs, reducedMotion) => {
+      renderGameFrame(canvas, initialState, { timestampMs, reducedMotion });
+    },
+    requestAnimationFrame: view?.requestAnimationFrame.bind(view),
+  });
+
+  const ResizeObserverConstructor = view?.ResizeObserver;
+  let resizeObserver: ResizeObserver | undefined;
+  if (ResizeObserverConstructor !== undefined) {
+    resizeObserver = new ResizeObserverConstructor(presentationLoop.redraw);
+    resizeObserver.observe(canvas);
+  }
+
+  reducedMotionQuery?.addEventListener(
+    'change',
+    presentationLoop.syncMotionPreference,
+  );
+
+  let resolutionQuery: MediaQueryList | undefined;
+  let resolutionDevicePixelRatio: number | undefined;
+  const armResolutionQuery = (): void => {
+    resolutionQuery?.removeEventListener('change', handleResolutionChange);
+    if (view === null || view === undefined) {
+      resolutionQuery = undefined;
+      resolutionDevicePixelRatio = undefined;
+      return;
+    }
+
+    resolutionDevicePixelRatio = view.devicePixelRatio;
+    resolutionQuery = view.matchMedia(
+      `(resolution: ${resolutionDevicePixelRatio}dppx)`,
+    );
+    resolutionQuery.addEventListener('change', handleResolutionChange);
+  };
+  const handleResolutionChange = (): void => {
+    presentationLoop.redraw();
+    armResolutionQuery();
+  };
+  const handleResize = (): void => {
+    presentationLoop.redraw();
+    if (view?.devicePixelRatio !== resolutionDevicePixelRatio) {
+      armResolutionQuery();
+    }
+  };
+
+  view?.addEventListener('resize', handleResize);
+  armResolutionQuery();
+
+  return () => {
+    presentationLoop.stop();
+    resizeObserver?.disconnect();
+    view?.removeEventListener('resize', handleResize);
+    resolutionQuery?.removeEventListener('change', handleResolutionChange);
+    reducedMotionQuery?.removeEventListener(
+      'change',
+      presentationLoop.syncMotionPreference,
+    );
+  };
 }

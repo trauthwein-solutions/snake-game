@@ -7,4 +7,8 @@ if (app === null) {
   throw new Error('SNAKISH application shell was not found.');
 }
 
-mountApp(app);
+const unmountApp = mountApp(app);
+
+if (import.meta.hot !== undefined) {
+  import.meta.hot.dispose(unmountApp);
+}
