@@ -8,6 +8,10 @@ export interface RendererPalette {
   readonly food: string;
   readonly foodDetail: string;
   readonly glow: string;
+  readonly foodFeedback: string;
+  readonly gameOverFeedback: string;
+  readonly completedFeedback: string;
+  readonly feedbackOutline: string;
   readonly foodShape: 'diamond';
 }
 
@@ -21,6 +25,10 @@ export const NORMAL_PALETTE: RendererPalette = {
   food: '#ff6f91',
   foodDetail: '#fff1a8',
   glow: '#52f2da',
+  foodFeedback: '#ff8baa',
+  gameOverFeedback: '#ff6f91',
+  completedFeedback: '#83fff1',
+  feedbackOutline: '#fff1a8',
   foodShape: 'diamond',
 };
 
@@ -34,6 +42,10 @@ export const HIGH_CONTRAST_PALETTE: RendererPalette = {
   food: '#ffcc00',
   foodDetail: '#000000',
   glow: '#ffffff',
+  foodFeedback: '#ffcc00',
+  gameOverFeedback: '#ffcc00',
+  completedFeedback: '#00ffff',
+  feedbackOutline: '#ffffff',
   foodShape: 'diamond',
 };
 

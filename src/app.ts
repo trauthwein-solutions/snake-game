@@ -7,11 +7,30 @@ import {
 import { createInputController } from './input/input-controller';
 import { createTouchControls } from './input/touch-controls';
 import { renderGameFrame } from './rendering/canvas-renderer';
+import {
+  EMPTY_ARCADE_FEEDBACK,
+  type ArcadeFeedback,
+  type FoodFeedbackEvent,
+  type TerminalFeedbackEvent,
+} from './rendering/effects';
 import { createPresentationLoop } from './rendering/presentation-loop';
 import { createFixedStepScheduler } from './timing/fixed-step-scheduler';
 import { announce, createAnnouncer } from './ui/announcer';
 import { createDialogs } from './ui/dialogs';
 import { createHud, updateHudScore } from './ui/hud';
+
+const enteredTerminalStatus = (
+  previousStatus: GameState['status'],
+  nextStatus: GameState['status'],
+): 'gameOver' | 'completed' | null => {
+  if (
+    nextStatus !== previousStatus &&
+    (nextStatus === 'gameOver' || nextStatus === 'completed')
+  ) {
+    return nextStatus;
+  }
+  return null;
+};
 
 export function mountApp(root: HTMLElement): () => void {
   const shell = document.createElement('main');
@@ -105,7 +124,38 @@ export function mountApp(root: HTMLElement): () => void {
   root.dataset.ready = 'true';
 
   let state: GameState = createInitialState();
+  let feedback: ArcadeFeedback = EMPTY_ARCADE_FEEDBACK;
   let tornDown = false;
+
+  const clearFeedback = (): void => {
+    feedback = EMPTY_ARCADE_FEEDBACK;
+  };
+
+  const recordFoodFeedback = (timestampMs: number): void => {
+    const head = state.snake[0];
+    if (head === undefined) {
+      return;
+    }
+
+    const event: FoodFeedbackEvent = Object.freeze({
+      type: 'food',
+      timestampMs,
+      position: Object.freeze({ x: head.x, y: head.y }),
+    });
+    feedback = Object.freeze({ ...feedback, food: event });
+  };
+
+  const recordTerminalFeedback = (
+    timestampMs: number,
+    status: 'gameOver' | 'completed',
+  ): void => {
+    const event: TerminalFeedbackEvent = Object.freeze({
+      type: 'terminal',
+      timestampMs,
+      status,
+    });
+    feedback = Object.freeze({ ...feedback, terminal: event });
+  };
 
   const updateStateView = (): void => {
     const head = state.snake[0];
@@ -166,7 +216,11 @@ export function mountApp(root: HTMLElement): () => void {
     cancelAnimationFrame: view?.cancelAnimationFrame.bind(view),
     prefersReducedMotion: () => reducedMotionQuery?.matches === true,
     render: (timestampMs, reducedMotion) => {
-      renderGameFrame(canvas, state, { timestampMs, reducedMotion });
+      renderGameFrame(canvas, state, {
+        timestampMs,
+        reducedMotion,
+        feedback,
+      });
     },
     requestAnimationFrame: view?.requestAnimationFrame.bind(view),
   });
@@ -246,23 +300,38 @@ export function mountApp(root: HTMLElement): () => void {
       }
 
       const previousScore = state.score;
+      const previousStatus: GameState['status'] = state.status;
       state = advanceSimulation(state, Math.random);
+      const scoreIncreased = state.score > previousScore;
+      const terminalStatus = enteredTerminalStatus(
+        previousStatus,
+        state.status,
+      );
+      if (scoreIncreased || terminalStatus !== null) {
+        const feedbackTimestampMs = getGameplayView().performance.now();
+        if (scoreIncreased) {
+          recordFoodFeedback(feedbackTimestampMs);
+        }
+        if (terminalStatus !== null) {
+          recordTerminalFeedback(feedbackTimestampMs, terminalStatus);
+        }
+      }
       updateStateView();
       presentationLoop.redraw();
 
-      if (state.score > previousScore) {
+      if (scoreIncreased) {
         announce(announcer, `Score ${state.score}.`);
       }
 
-      if (state.status === 'gameOver' || state.status === 'completed') {
+      if (terminalStatus !== null) {
         if (scheduler.isRunning()) {
           scheduler.pause();
         }
         dialogs.closeSettings();
-        dialogs.showResult(state.status, state.score);
+        dialogs.showResult(terminalStatus, state.score);
         announce(
           announcer,
-          state.status === 'completed'
+          terminalStatus === 'completed'
             ? `Grid complete. Final score ${state.score}.`
             : `Game over. Final score ${state.score}.`,
         );
@@ -333,6 +402,7 @@ export function mountApp(root: HTMLElement): () => void {
     }
 
     getGameplayView();
+    clearFeedback();
     state = applyCommand(state, { type: 'restart' });
     state = applyCommand(state, { type: 'start' });
     dialogs.closeResult();
@@ -355,6 +425,7 @@ export function mountApp(root: HTMLElement): () => void {
     if (scheduler.isRunning()) {
       scheduler.pause();
     }
+    clearFeedback();
     state = applyCommand(state, { type: 'restart' });
     dialogs.closeResult();
     updateStateView();
