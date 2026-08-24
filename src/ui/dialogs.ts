@@ -1,10 +1,19 @@
 import type { GameStatus } from '../engine/model';
+import type { Preferences } from '../storage/preferences';
+
+export interface SettingsControls {
+  readonly music: HTMLInputElement;
+  readonly soundEffects: HTMLInputElement;
+  readonly reducedMotion: HTMLInputElement;
+  readonly highContrast: HTMLInputElement;
+}
 
 interface GameDialogs {
   settingsDialog: HTMLDialogElement;
   gameOverDialog: HTMLDialogElement;
   playAgainButton: HTMLButtonElement;
   returnToTitleButton: HTMLButtonElement;
+  settingsControls: SettingsControls;
   showResult(
     status: Extract<GameStatus, 'gameOver' | 'completed'>,
     score: number,
@@ -26,8 +35,12 @@ function createSetting(name: string, checked = false): string {
   `;
 }
 
-function createSettingsDialog(settingsButton: HTMLButtonElement): {
+function createSettingsDialog(
+  settingsButton: HTMLButtonElement,
+  initialSettings: Preferences,
+): {
   dialog: HTMLDialogElement;
+  controls: SettingsControls;
   teardown: () => void;
 } {
   const dialog = document.createElement('dialog');
@@ -43,23 +56,50 @@ function createSettingsDialog(settingsButton: HTMLButtonElement): {
       <button class="icon-button" type="button" aria-label="Close settings">×</button>
     </div>
     <div class="settings-list">
-      ${createSetting('Music', true)}
-      ${createSetting('Sound effects', true)}
-      ${createSetting('Reduced motion')}
-      ${createSetting('High contrast')}
+      ${createSetting('Music', initialSettings.music)}
+      ${createSetting('Sound effects', initialSettings.soundEffects)}
+      ${createSetting('Reduced motion', initialSettings.reducedMotion)}
+      ${createSetting('High contrast', initialSettings.highContrast)}
     </div>
   `;
 
   const closeButton = dialog.querySelector<HTMLButtonElement>('.icon-button');
-  const firstControl = dialog.querySelector<HTMLInputElement>('input');
+  const music = dialog.querySelector<HTMLInputElement>('#setting-music');
+  const soundEffects = dialog.querySelector<HTMLInputElement>(
+    '#setting-sound-effects',
+  );
+  const reducedMotion = dialog.querySelector<HTMLInputElement>(
+    '#setting-reduced-motion',
+  );
+  const highContrast = dialog.querySelector<HTMLInputElement>(
+    '#setting-high-contrast',
+  );
 
-  if (closeButton === null || firstControl === null) {
+  if (
+    closeButton === null ||
+    music === null ||
+    soundEffects === null ||
+    reducedMotion === null ||
+    highContrast === null
+  ) {
     throw new Error('Settings dialog controls could not be created.');
   }
 
+  const controls: SettingsControls = {
+    music,
+    soundEffects,
+    reducedMotion,
+    highContrast,
+  };
+
+  controls.music.checked = initialSettings.music;
+  controls.soundEffects.checked = initialSettings.soundEffects;
+  controls.reducedMotion.checked = initialSettings.reducedMotion;
+  controls.highContrast.checked = initialSettings.highContrast;
+
   const openSettings = (): void => {
     dialog.showModal();
-    firstControl.focus();
+    controls.music.focus();
   };
   const closeSettings = (): void => dialog.close();
   const restoreSettingsFocus = (): void => settingsButton.focus();
@@ -70,6 +110,7 @@ function createSettingsDialog(settingsButton: HTMLButtonElement): {
 
   return {
     dialog,
+    controls,
     teardown: () => {
       settingsButton.removeEventListener('click', openSettings);
       closeButton.removeEventListener('click', closeSettings);
@@ -104,8 +145,11 @@ function createGameOverDialog(): HTMLDialogElement {
   return dialog;
 }
 
-export function createDialogs(settingsButton: HTMLButtonElement): GameDialogs {
-  const settings = createSettingsDialog(settingsButton);
+export function createDialogs(
+  settingsButton: HTMLButtonElement,
+  initialSettings: Preferences,
+): GameDialogs {
+  const settings = createSettingsDialog(settingsButton, initialSettings);
   const gameOverDialog = createGameOverDialog();
   const resultTitle =
     gameOverDialog.querySelector<HTMLElement>('#game-over-title');
@@ -140,6 +184,7 @@ export function createDialogs(settingsButton: HTMLButtonElement): GameDialogs {
     gameOverDialog,
     playAgainButton,
     returnToTitleButton,
+    settingsControls: settings.controls,
     showResult: (status, score, isNewBest) => {
       resultTitle.textContent =
         status === 'completed' ? 'Grid complete' : 'Game over';

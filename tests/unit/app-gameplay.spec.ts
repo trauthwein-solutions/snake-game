@@ -6,6 +6,7 @@ import type { ArcadeFeedback } from '../../src/rendering/effects';
 type Listener = (event?: Event) => void;
 
 class FakeElement {
+  checked = false;
   className = '';
   dataset: Record<string, string> = {};
   disabled = false;
@@ -66,6 +67,13 @@ class FakeElement {
     if (this.tagName === 'dialog' && this.id === 'settings-dialog') {
       if (selector === '.icon-button') return this.ownerDocument.closeButton;
       if (selector === 'input') return this.ownerDocument.firstControl;
+      if (selector === '#setting-music') return this.ownerDocument.musicControl;
+      if (selector === '#setting-sound-effects')
+        return this.ownerDocument.soundEffectsControl;
+      if (selector === '#setting-reduced-motion')
+        return this.ownerDocument.reducedMotionControl;
+      if (selector === '#setting-high-contrast')
+        return this.ownerDocument.highContrastControl;
     }
 
     if (this.tagName === 'dialog' && this.id === 'game-over-dialog') {
@@ -106,8 +114,15 @@ class FakeElement {
 }
 
 class FakeMediaQueryList {
-  matches = false;
+  matches: boolean;
   readonly listeners = new Set<Listener>();
+
+  constructor(
+    readonly media: string,
+    matches = false,
+  ) {
+    this.matches = matches;
+  }
 
   addEventListener(type: string, listener: Listener): void {
     if (type === 'change') this.listeners.add(listener);
@@ -115,6 +130,10 @@ class FakeMediaQueryList {
 
   removeEventListener(type: string, listener: Listener): void {
     if (type === 'change') this.listeners.delete(listener);
+  }
+
+  dispatchChange(): void {
+    for (const listener of [...this.listeners]) listener(new Event('change'));
   }
 }
 
@@ -137,7 +156,12 @@ class FakeView {
   readonly clearTimeout = vi.fn();
   readonly requestAnimationFrame = vi.fn(() => 1);
   readonly cancelAnimationFrame = vi.fn();
-  readonly matchMedia = vi.fn(() => new FakeMediaQueryList());
+  readonly mediaQueries: FakeMediaQueryList[] = [];
+  readonly matchMedia = vi.fn((media: string) => {
+    const query = new FakeMediaQueryList(media);
+    this.mediaQueries.push(query);
+    return query;
+  });
   readonly localStorage = new FakeStorage();
   readonly listeners = new Map<string, Set<Listener>>();
 
@@ -170,7 +194,11 @@ class FakeDocument {
   readonly canvas = new FakeElement('canvas', this);
   readonly touchControlsMount = new FakeElement('div', this);
   readonly closeButton = new FakeElement('button', this);
-  readonly firstControl = new FakeElement('input', this);
+  readonly musicControl = new FakeElement('input', this);
+  readonly soundEffectsControl = new FakeElement('input', this);
+  readonly reducedMotionControl = new FakeElement('input', this);
+  readonly highContrastControl = new FakeElement('input', this);
+  readonly firstControl = this.musicControl;
   readonly resultTitle = new FakeElement('h2', this);
   readonly finalScore = new FakeElement('strong', this);
   readonly newBest = new FakeElement('p', this);
@@ -227,6 +255,7 @@ const harness = vi.hoisted(() => ({
   onStep: undefined as (() => void) | undefined,
   presentationOptions: undefined as
     | {
+        prefersReducedMotion: () => boolean;
         render: (timestampMs: number, reducedMotion: boolean) => void;
       }
     | undefined,
@@ -253,6 +282,7 @@ vi.mock('../../src/rendering/canvas-renderer', () => ({
 vi.mock('../../src/rendering/presentation-loop', () => ({
   createPresentationLoop: vi.fn(
     (options: {
+      prefersReducedMotion: () => boolean;
       render: (timestampMs: number, reducedMotion: boolean) => void;
     }) => {
       harness.presentationOptions = options;
@@ -298,26 +328,59 @@ const dialogElements = vi.hoisted(() => ({
   playAgainButton: undefined as FakeElement | undefined,
   returnToTitleButton: undefined as FakeElement | undefined,
   settingsDialog: undefined as FakeElement | undefined,
+  settingsControls: undefined as
+    | {
+        music: FakeElement;
+        soundEffects: FakeElement;
+        reducedMotion: FakeElement;
+        highContrast: FakeElement;
+      }
+    | undefined,
 }));
 
 vi.mock('../../src/ui/dialogs', () => ({
-  createDialogs: vi.fn((settingsButton: FakeElement) => {
-    const document = settingsButton.ownerDocument;
-    dialogElements.settingsDialog = new FakeElement('dialog', document);
-    dialogElements.gameOverDialog = new FakeElement('dialog', document);
-    dialogElements.playAgainButton = new FakeElement('button', document);
-    dialogElements.returnToTitleButton = new FakeElement('button', document);
-    return {
-      settingsDialog: dialogElements.settingsDialog,
-      gameOverDialog: dialogElements.gameOverDialog,
-      playAgainButton: dialogElements.playAgainButton,
-      returnToTitleButton: dialogElements.returnToTitleButton,
-      showResult: harness.showResult,
-      closeResult: harness.closeResult,
-      closeSettings: harness.closeSettings,
-      teardown: harness.dialogTeardown,
-    };
-  }),
+  createDialogs: vi.fn(
+    (
+      settingsButton: FakeElement,
+      initialSettings: {
+        music: boolean;
+        soundEffects: boolean;
+        reducedMotion: boolean;
+        highContrast: boolean;
+      },
+    ) => {
+      const document = settingsButton.ownerDocument;
+      dialogElements.settingsDialog = new FakeElement('dialog', document);
+      dialogElements.gameOverDialog = new FakeElement('dialog', document);
+      dialogElements.playAgainButton = new FakeElement('button', document);
+      dialogElements.returnToTitleButton = new FakeElement('button', document);
+      dialogElements.settingsControls = {
+        music: new FakeElement('input', document),
+        soundEffects: new FakeElement('input', document),
+        reducedMotion: new FakeElement('input', document),
+        highContrast: new FakeElement('input', document),
+      };
+      for (const key of [
+        'music',
+        'soundEffects',
+        'reducedMotion',
+        'highContrast',
+      ] as const) {
+        dialogElements.settingsControls[key].checked = initialSettings[key];
+      }
+      return {
+        settingsDialog: dialogElements.settingsDialog,
+        gameOverDialog: dialogElements.gameOverDialog,
+        playAgainButton: dialogElements.playAgainButton,
+        returnToTitleButton: dialogElements.returnToTitleButton,
+        settingsControls: dialogElements.settingsControls,
+        showResult: harness.showResult,
+        closeResult: harness.closeResult,
+        closeSettings: harness.closeSettings,
+        teardown: harness.dialogTeardown,
+      };
+    },
+  ),
 }));
 
 vi.mock('../../src/ui/announcer', () => ({
@@ -423,13 +486,161 @@ describe('mountApp gameplay lifecycle', () => {
       );
     });
 
-    expect(document.defaultView.localStorage.getItem).toHaveBeenCalledOnce();
+    expect(document.defaultView.localStorage.getItem.mock.calls).toEqual([
+      ['snakish.preferences.v1'],
+      ['snakish.best-score.v1'],
+    ]);
     expect(harness.updateHudScore).toHaveBeenCalledWith(expect.anything(), 0);
     expect(harness.updateHudBestScore).toHaveBeenCalledWith(
       expect.anything(),
       40,
     );
     expect(harness.updateHudBestScore).toHaveBeenCalledOnce();
+  });
+
+  it('loads all Settings controls once before publishing effective visuals', () => {
+    const { document, root } = mountHarness((fakeDocument) => {
+      fakeDocument.defaultView.localStorage.values.set(
+        'snakish.preferences.v1',
+        '{"highContrast":true,"reducedMotion":true,"soundEffects":false,"music":false,"version":1}',
+      );
+    });
+
+    expect(dialogElements.settingsControls).toMatchObject({
+      music: { checked: false },
+      soundEffects: { checked: false },
+      reducedMotion: { checked: true },
+      highContrast: { checked: true },
+    });
+    expect(root.dataset).toMatchObject({
+      highContrast: 'true',
+      reducedMotion: 'true',
+    });
+    expect(
+      document.defaultView.localStorage.getItem.mock.calls.filter(
+        ([key]) => key === 'snakish.preferences.v1',
+      ),
+    ).toHaveLength(1);
+    harness.presentationOptions?.render(15, true);
+    expect(harness.render).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        colorMode: 'high-contrast',
+        reducedMotion: true,
+      }),
+    );
+  });
+
+  it('writes one canonical complete payload only for each actual checkbox change', () => {
+    const { document } = mountHarness();
+    document.defaultView.localStorage.setItem.mockClear();
+    const controls = dialogElements.settingsControls;
+    if (controls === undefined) throw new Error('Expected Settings controls.');
+
+    controls.music.checked = true;
+    controls.music.dispatchEvent(new Event('change'));
+    expect(document.defaultView.localStorage.setItem).not.toHaveBeenCalled();
+
+    controls.music.checked = false;
+    controls.music.dispatchEvent(new Event('change'));
+    controls.soundEffects.checked = false;
+    controls.soundEffects.dispatchEvent(new Event('change'));
+
+    expect(document.defaultView.localStorage.setItem.mock.calls).toEqual([
+      [
+        'snakish.preferences.v1',
+        '{"version":1,"music":false,"soundEffects":true,"reducedMotion":false,"highContrast":false}',
+      ],
+      [
+        'snakish.preferences.v1',
+        '{"version":1,"music":false,"soundEffects":false,"reducedMotion":false,"highContrast":false}',
+      ],
+    ]);
+    expect(harness.presentationRedraw).not.toHaveBeenCalled();
+    expect(harness.presentationSync).not.toHaveBeenCalled();
+    expect(harness.schedulerOperations).toEqual([]);
+  });
+
+  it('keeps checkbox state in memory when preference saving throws', () => {
+    mountHarness((fakeDocument) => {
+      fakeDocument.defaultView.localStorage.setItem.mockImplementation(() => {
+        throw new Error('blocked');
+      });
+    });
+    const controls = dialogElements.settingsControls;
+    if (controls === undefined) throw new Error('Expected Settings controls.');
+
+    for (const control of Object.values(controls)) {
+      control.checked = !control.checked;
+      expect(() => control.dispatchEvent(new Event('change'))).not.toThrow();
+    }
+
+    expect(controls).toMatchObject({
+      music: { checked: false },
+      soundEffects: { checked: false },
+      reducedMotion: { checked: true },
+      highContrast: { checked: true },
+    });
+  });
+
+  it('redraws high contrast immediately and uses its color mode on every frame', () => {
+    const { root } = mountHarness();
+    const control = dialogElements.settingsControls?.highContrast;
+    if (control === undefined) throw new Error('Expected High contrast.');
+
+    control.checked = true;
+    control.dispatchEvent(new Event('change'));
+
+    expect(root.dataset.highContrast).toBe('true');
+    expect(harness.presentationRedraw).toHaveBeenCalledOnce();
+    harness.presentationOptions?.render(30, false);
+    expect(harness.render.mock.calls.at(-1)?.[2]).toMatchObject({
+      colorMode: 'high-contrast',
+    });
+
+    control.checked = false;
+    control.dispatchEvent(new Event('change'));
+    harness.presentationOptions?.render(40, false);
+    expect(harness.render.mock.calls.at(-1)?.[2]).toMatchObject({
+      colorMode: 'normal',
+    });
+  });
+
+  it('applies stored/system reduced-motion truth table and never saves OS changes', () => {
+    const { document, root } = mountHarness();
+    const control = dialogElements.settingsControls?.reducedMotion;
+    const query = document.defaultView.mediaQueries.find(
+      ({ media }) => media === '(prefers-reduced-motion: reduce)',
+    );
+    if (control === undefined || query === undefined) {
+      throw new Error('Expected reduced-motion controls.');
+    }
+    document.defaultView.localStorage.setItem.mockClear();
+
+    control.checked = true;
+    control.dispatchEvent(new Event('change'));
+    expect(root.dataset.reducedMotion).toBe('true');
+    expect(harness.presentationOptions?.prefersReducedMotion()).toBe(true);
+    expect(harness.presentationSync).toHaveBeenCalledTimes(1);
+
+    query.matches = true;
+    query.dispatchChange();
+    expect(root.dataset.reducedMotion).toBe('true');
+    expect(harness.presentationSync).toHaveBeenCalledTimes(2);
+
+    control.checked = false;
+    control.dispatchEvent(new Event('change'));
+    expect(root.dataset.reducedMotion).toBe('true');
+    expect(harness.presentationOptions?.prefersReducedMotion()).toBe(true);
+    expect(harness.presentationSync).toHaveBeenCalledTimes(3);
+
+    query.matches = false;
+    query.dispatchChange();
+    expect(root.dataset.reducedMotion).toBe('false');
+    expect(harness.presentationOptions?.prefersReducedMotion()).toBe(false);
+    expect(harness.presentationSync).toHaveBeenCalledTimes(4);
+    expect(document.defaultView.localStorage.setItem).toHaveBeenCalledTimes(2);
   });
 
   it('does not write for scores below or tied with the persisted best', () => {
@@ -1209,7 +1420,19 @@ describe('gameplay UI helpers', () => {
     >('../../src/ui/dialogs');
     const dialogs = createDialogs(
       document.settingsButton as unknown as HTMLButtonElement,
+      {
+        version: 1,
+        music: false,
+        soundEffects: true,
+        reducedMotion: true,
+        highContrast: false,
+      },
     );
+
+    expect(dialogs.settingsControls.music.checked).toBe(false);
+    expect(dialogs.settingsControls.soundEffects.checked).toBe(true);
+    expect(dialogs.settingsControls.reducedMotion.checked).toBe(true);
+    expect(dialogs.settingsControls.highContrast.checked).toBe(false);
 
     dialogs.showResult(status, 40, true);
 
@@ -1231,6 +1454,13 @@ describe('gameplay UI helpers', () => {
     >('../../src/ui/dialogs');
     const dialogs = createDialogs(
       document.settingsButton as unknown as HTMLButtonElement,
+      {
+        version: 1,
+        music: true,
+        soundEffects: true,
+        reducedMotion: false,
+        highContrast: false,
+      },
     );
     const settingsDialog = dialogs.settingsDialog as unknown as FakeElement;
     const gameOverDialog = dialogs.gameOverDialog as unknown as FakeElement;

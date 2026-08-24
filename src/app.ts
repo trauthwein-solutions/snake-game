@@ -20,6 +20,12 @@ import {
   saveBestScore,
   type BestScoreStorage,
 } from './storage/best-score';
+import {
+  loadPreferences,
+  savePreferences,
+  type Preferences,
+  type PreferencesStorage,
+} from './storage/preferences';
 import { announce, createAnnouncer } from './ui/announcer';
 import { createDialogs } from './ui/dialogs';
 import { createHud, updateHudBestScore, updateHudScore } from './ui/hud';
@@ -117,27 +123,43 @@ export function mountApp(root: HTMLElement): () => void {
     throw new Error('SNAKISH interface controls could not be created.');
   }
 
+  const view = canvas.ownerDocument.defaultView;
+  let storage: (BestScoreStorage & PreferencesStorage) | undefined;
+  try {
+    storage = view?.localStorage;
+  } catch {
+    storage = undefined;
+  }
+
+  let preferences = loadPreferences(storage);
+  const reducedMotionQuery = view?.matchMedia(
+    '(prefers-reduced-motion: reduce)',
+  );
+  const prefersReducedMotion = (): boolean =>
+    preferences.reducedMotion || reducedMotionQuery?.matches === true;
+  const publishVisualPreferences = (): void => {
+    const highContrast = String(preferences.highContrast);
+    const reducedMotion = String(prefersReducedMotion());
+    root.dataset.highContrast = highContrast;
+    root.dataset.reducedMotion = reducedMotion;
+    shell.dataset.highContrast = highContrast;
+    shell.dataset.reducedMotion = reducedMotion;
+  };
+
   const hud = createHud();
   hudMount.replaceWith(hud);
   const touchControls = createTouchControls(canvas.ownerDocument);
   touchControlsMount.replaceWith(touchControls.element);
-  const dialogs = createDialogs(settingsButton);
+  const dialogs = createDialogs(settingsButton, preferences);
   const announcer = createAnnouncer();
   shell.append(dialogs.settingsDialog, dialogs.gameOverDialog, announcer);
 
+  publishVisualPreferences();
   root.replaceChildren(shell);
   root.dataset.ready = 'true';
 
-  const view = canvas.ownerDocument.defaultView;
-  let bestScoreStorage: BestScoreStorage | undefined;
-  try {
-    bestScoreStorage = view?.localStorage;
-  } catch {
-    bestScoreStorage = undefined;
-  }
-
   let state: GameState = createInitialState();
-  let bestScore = loadBestScore(bestScoreStorage);
+  let bestScore = loadBestScore(storage);
   let runStartingBest: number | undefined;
   let feedback: ArcadeFeedback = EMPTY_ARCADE_FEEDBACK;
   let tornDown = false;
@@ -224,16 +246,14 @@ export function mountApp(root: HTMLElement): () => void {
     onPauseToggle: recordPauseIntent,
   });
 
-  const reducedMotionQuery = view?.matchMedia(
-    '(prefers-reduced-motion: reduce)',
-  );
   const presentationLoop = createPresentationLoop({
     cancelAnimationFrame: view?.cancelAnimationFrame.bind(view),
-    prefersReducedMotion: () => reducedMotionQuery?.matches === true,
+    prefersReducedMotion,
     render: (timestampMs, reducedMotion) => {
       renderGameFrame(canvas, state, {
         timestampMs,
         reducedMotion,
+        colorMode: preferences.highContrast ? 'high-contrast' : 'normal',
         feedback,
       });
     },
@@ -247,10 +267,45 @@ export function mountApp(root: HTMLElement): () => void {
     resizeObserver.observe(canvas);
   }
 
-  reducedMotionQuery?.addEventListener(
-    'change',
-    presentationLoop.syncMotionPreference,
-  );
+  const handleReducedMotionChange = (): void => {
+    if (tornDown) {
+      return;
+    }
+    publishVisualPreferences();
+    presentationLoop.syncMotionPreference();
+  };
+  reducedMotionQuery?.addEventListener('change', handleReducedMotionChange);
+
+  const settingKeys = [
+    'music',
+    'soundEffects',
+    'reducedMotion',
+    'highContrast',
+  ] as const;
+  const settingListeners = settingKeys.map((key) => {
+    const control = dialogs.settingsControls[key];
+    const handleChange = (): void => {
+      if (tornDown || control.checked === preferences[key]) {
+        return;
+      }
+
+      preferences = Object.freeze({
+        ...preferences,
+        [key]: control.checked,
+      }) as Preferences;
+      savePreferences(storage, preferences);
+
+      if (key === 'reducedMotion') {
+        publishVisualPreferences();
+        presentationLoop.syncMotionPreference();
+      } else if (key === 'highContrast') {
+        publishVisualPreferences();
+        presentationLoop.redraw();
+      }
+    };
+    control.addEventListener('change', handleChange);
+    return { control, handleChange };
+  });
 
   let resolutionQuery: MediaQueryList | undefined;
   let resolutionDevicePixelRatio: number | undefined;
@@ -320,7 +375,7 @@ export function mountApp(root: HTMLElement): () => void {
       const scoreIncreased = state.score > previousScore;
       if (state.score > bestScore) {
         bestScore = state.score;
-        saveBestScore(bestScoreStorage, bestScore);
+        saveBestScore(storage, bestScore);
       }
       const terminalStatus = enteredTerminalStatus(
         previousStatus,
@@ -478,6 +533,9 @@ export function mountApp(root: HTMLElement): () => void {
     restartButton.removeEventListener('click', restartAndStart);
     dialogs.playAgainButton.removeEventListener('click', restartAndStart);
     dialogs.returnToTitleButton.removeEventListener('click', returnToTitle);
+    for (const { control, handleChange } of settingListeners) {
+      control.removeEventListener('change', handleChange);
+    }
     dialogs.teardown();
     scheduler.dispose();
     teardownInput();
@@ -492,7 +550,7 @@ export function mountApp(root: HTMLElement): () => void {
     resolutionQuery?.removeEventListener('change', handleResolutionChange);
     reducedMotionQuery?.removeEventListener(
       'change',
-      presentationLoop.syncMotionPreference,
+      handleReducedMotionChange,
     );
   };
 }

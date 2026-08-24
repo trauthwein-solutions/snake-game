@@ -161,9 +161,18 @@ test('shows and tears down the actual completed-result dialog helper', async ({
   await page.goto('/');
 
   await page.evaluate(async () => {
-    const modulePath = '/src/ui/dialogs.ts';
-    const { createDialogs } = (await import(/* @vite-ignore */ modulePath)) as {
-      createDialogs: (settingsButton: HTMLButtonElement) => {
+    const dialogsModulePath = '/src/ui/dialogs.ts';
+    const preferencesModulePath = '/src/storage/preferences.ts';
+    const { DEFAULT_PREFERENCES } = (await import(
+      /* @vite-ignore */ preferencesModulePath
+    )) as typeof import('../../src/storage/preferences');
+    const { createDialogs } = (await import(
+      /* @vite-ignore */ dialogsModulePath
+    )) as {
+      createDialogs: (
+        settingsButton: HTMLButtonElement,
+        initialPreferences: typeof DEFAULT_PREFERENCES,
+      ) => {
         settingsDialog: HTMLDialogElement;
         gameOverDialog: HTMLDialogElement;
         showResult: (
@@ -182,7 +191,7 @@ test('shows and tears down the actual completed-result dialog helper', async ({
     const settingsButton = document.createElement('button');
     settingsButton.type = 'button';
     settingsButton.textContent = 'Fixture settings';
-    const dialogs = createDialogs(settingsButton);
+    const dialogs = createDialogs(settingsButton, DEFAULT_PREFERENCES);
     fixture.append(
       settingsButton,
       dialogs.settingsDialog,

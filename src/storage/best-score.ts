@@ -1,3 +1,5 @@
+import { parseStrictJsonObject } from './strict-json-object';
+
 export const BEST_SCORE_STORAGE_KEY = 'snakish.best-score.v1';
 
 export interface BestScoreStorage {
@@ -31,58 +33,6 @@ const isBestScorePayload = (
   return payload.version === 1 && isValidScore(payload.bestScore);
 };
 
-const hasExactBestScoreMemberNames = (serialized: string): boolean => {
-  const memberNames: string[] = [];
-  let depth = 0;
-  let expectsMemberName = false;
-
-  // JSON.parse has already established valid syntax and a top-level object.
-  // Scan only its top-level string keys so duplicate or escaped-equivalent
-  // names cannot be hidden by JSON.parse's last-member-wins behavior.
-  for (let index = 0; index < serialized.length; index += 1) {
-    const character = serialized[index];
-
-    if (character === '"') {
-      const tokenStart = index;
-      index += 1;
-
-      while (index < serialized.length) {
-        if (serialized[index] === '\\') {
-          index += 2;
-          continue;
-        }
-        if (serialized[index] === '"') {
-          break;
-        }
-        index += 1;
-      }
-
-      if (depth === 1 && expectsMemberName) {
-        memberNames.push(JSON.parse(serialized.slice(tokenStart, index + 1)));
-        expectsMemberName = false;
-      }
-      continue;
-    }
-
-    if (character === '{' || character === '[') {
-      depth += 1;
-      if (depth === 1) {
-        expectsMemberName = true;
-      }
-    } else if (character === '}' || character === ']') {
-      depth -= 1;
-    } else if (character === ',' && depth === 1) {
-      expectsMemberName = true;
-    }
-  }
-
-  return (
-    memberNames.length === 2 &&
-    memberNames.includes('version') &&
-    memberNames.includes('bestScore')
-  );
-};
-
 export function loadBestScore(
   storage: BestScoreStorage | null | undefined,
 ): number {
@@ -92,11 +42,11 @@ export function loadBestScore(
       return 0;
     }
 
-    const payload: unknown = JSON.parse(storedValue);
-    return isBestScorePayload(payload) &&
-      hasExactBestScoreMemberNames(storedValue)
-      ? payload.bestScore
-      : 0;
+    const payload = parseStrictJsonObject(storedValue, [
+      'version',
+      'bestScore',
+    ]);
+    return isBestScorePayload(payload) ? payload.bestScore : 0;
   } catch {
     return 0;
   }
