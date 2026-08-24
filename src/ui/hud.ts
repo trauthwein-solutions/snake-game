@@ -17,3 +17,13 @@ export function createHud(): HTMLElement {
 
   return hud;
 }
+
+export function updateHudScore(hud: HTMLElement, score: number): void {
+  const scoreValue = hud.querySelector<HTMLElement>('[data-score="current"]');
+
+  if (scoreValue === null) {
+    throw new Error('SNAKISH score display could not be found.');
+  }
+
+  scoreValue.textContent = String(score);
+}

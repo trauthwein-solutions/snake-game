@@ -63,6 +63,7 @@ class FakeElement {
   innerHTML = '';
   readonly children: FakeElement[] = [];
   readonly eventListeners = new Map<string, Set<EventListener>>();
+  open = false;
 
   constructor(
     readonly tagName: string,
@@ -75,11 +76,17 @@ class FakeElement {
     this.eventListeners.set(type, listeners);
   }
 
+  removeEventListener(type: string, listener: EventListener): void {
+    this.eventListeners.get(type)?.delete(listener);
+  }
+
   append(...children: FakeElement[]): void {
     this.children.push(...children);
   }
 
-  close(): void {}
+  close(): void {
+    this.open = false;
+  }
 
   focus(): void {}
 
@@ -90,6 +97,12 @@ class FakeElement {
       }
       if (selector === '[data-action="settings"]') {
         return this.ownerDocument.settingsButton;
+      }
+      if (selector === '[data-action="play"]') {
+        return this.ownerDocument.playButton;
+      }
+      if (selector === '[data-action="restart"]') {
+        return this.ownerDocument.restartButton;
       }
       if (selector === '[data-render-target="arena"]') {
         return this.ownerDocument.canvas;
@@ -105,6 +118,21 @@ class FakeElement {
       if (selector === 'input') {
         return this.ownerDocument.firstControl;
       }
+      if (selector === '#game-over-title') {
+        return this.ownerDocument.resultTitle;
+      }
+      if (selector === '[data-score="final"]') {
+        return this.ownerDocument.finalScore;
+      }
+      if (selector === '[data-action="play-again"]') {
+        return this.ownerDocument.playAgainButton;
+      }
+      if (selector === '[data-action="return-to-title"]') {
+        return this.ownerDocument.returnToTitleButton;
+      }
+    }
+    if (this.tagName === 'section' && selector === '[data-score="current"]') {
+      return this.ownerDocument.scoreValue;
     }
     return null;
   }
@@ -117,7 +145,9 @@ class FakeElement {
 
   setAttribute(): void {}
 
-  showModal(): void {}
+  showModal(): void {
+    this.open = true;
+  }
 }
 
 class FakeResizeObserver {
@@ -168,10 +198,17 @@ class FakeDocument {
   readonly defaultView = new FakeView();
   readonly hudMount = new FakeElement('div', this);
   readonly settingsButton = new FakeElement('button', this);
+  readonly playButton = new FakeElement('button', this);
+  readonly restartButton = new FakeElement('button', this);
   readonly canvas = new FakeElement('canvas', this);
   readonly touchControlsMount = new FakeElement('div', this);
   readonly closeButton = new FakeElement('button', this);
   readonly firstControl = new FakeElement('input', this);
+  readonly resultTitle = new FakeElement('h2', this);
+  readonly finalScore = new FakeElement('strong', this);
+  readonly playAgainButton = new FakeElement('button', this);
+  readonly returnToTitleButton = new FakeElement('button', this);
+  readonly scoreValue = new FakeElement('dd', this);
 
   createElement(tagName: string): FakeElement {
     return new FakeElement(tagName, this);
