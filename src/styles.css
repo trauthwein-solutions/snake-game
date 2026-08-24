@@ -158,12 +158,60 @@ h1 {
   border: 1px solid #173945;
   border-radius: 0.55rem;
   background: #051017;
+  touch-action: pinch-zoom;
 }
 
 .instructions {
   text-align: center;
   font-size: 0.86rem;
   line-height: 1.45;
+}
+
+.dpad {
+  display: grid;
+  grid-template: repeat(2, 48px) / repeat(3, 48px);
+  width: max-content;
+  margin-inline: auto;
+  gap: 0.45rem;
+  touch-action: none;
+  user-select: none;
+}
+
+.dpad__button {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 1px solid var(--line-bright);
+  border-radius: 0.65rem;
+  color: var(--cyan);
+  background: rgb(13 29 39 / 78%);
+  place-items: center;
+  cursor: pointer;
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.dpad__button:hover {
+  border-color: var(--cyan);
+  background: #112a34;
+}
+
+.dpad__button--up {
+  grid-area: 1 / 2;
+}
+
+.dpad__button--right {
+  grid-area: 2 / 3;
+}
+
+.dpad__button--down {
+  grid-area: 2 / 2;
+}
+
+.dpad__button--left {
+  grid-area: 2 / 1;
 }
 
 .game-actions {
