@@ -151,28 +151,13 @@ h1 {
     0 0 1.75rem rgb(114 247 226 / 8%);
 }
 
-.arena-placeholder {
-  display: grid;
+.arena-canvas {
+  display: block;
   width: 100%;
   aspect-ratio: 1;
   border: 1px solid #173945;
   border-radius: 0.55rem;
-  background:
-    linear-gradient(rgb(54 121 129 / 12%) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(54 121 129 / 12%) 1px, transparent 1px), #061018;
-  background-size: 8.333% 8.333%;
-  place-items: center;
-}
-
-.arena-placeholder span {
-  padding: 0.4rem 0.7rem;
-  border: 1px solid #285460;
-  border-radius: 999px;
-  color: #78979e;
-  font-size: 0.7rem;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  background: #051017;
 }
 
 .instructions {
