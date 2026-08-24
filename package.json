@@ -8,12 +8,15 @@
   },
   "scripts": {
     "dev": "vite",
+    "preview": "vite preview",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "format:check": "prettier --check .",
     "test": "vitest run --passWithNoTests",
-    "test:e2e": "playwright test --pass-with-no-tests"
+    "test:e2e": "npm run test:e2e:production && npm run test:e2e:source-fixtures",
+    "test:e2e:production": "playwright test --pass-with-no-tests",
+    "test:e2e:source-fixtures": "playwright test --config=playwright.source-fixtures.config.ts --pass-with-no-tests"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

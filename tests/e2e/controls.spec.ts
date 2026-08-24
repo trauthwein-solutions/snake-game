@@ -4,6 +4,16 @@ const test = (
   import.meta.env?.MODE === 'test' ? () => undefined : playwrightTest
 ) as typeof playwrightTest;
 
+function sourceFixtureTest(
+  title: string,
+  body: (fixtures: { page: Page }) => Promise<void>,
+): void {
+  test(title, { tag: '@source-fixture' }, body);
+}
+
+const TOUCH_TEARDOWN_FIXTURE_TITLE =
+  'removes touch swipe listeners during teardown';
+
 function collectPageErrors(page: Page): string[] {
   const errors: string[] = [];
 
@@ -632,7 +642,7 @@ test('keeps native page scrolling available for a real touch gesture outside res
   expect(browserErrors).toEqual([]);
 });
 
-test('removes touch swipe listeners during teardown', async ({ page }) => {
+sourceFixtureTest(TOUCH_TEARDOWN_FIXTURE_TITLE, async ({ page }) => {
   const browserErrors = collectPageErrors(page);
   await page.setViewportSize({ width: 320, height: 320 });
   await page.goto('/');
