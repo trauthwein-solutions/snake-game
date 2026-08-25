@@ -4,6 +4,16 @@ const test = (
   import.meta.env?.MODE === 'test' ? () => undefined : playwrightTest
 ) as typeof playwrightTest;
 
+function sourceFixtureTest(
+  title: string,
+  body: (fixtures: { page: Page }) => Promise<void>,
+): void {
+  test(title, { tag: '@source-fixture' }, body);
+}
+
+const COMPLETED_DIALOG_FIXTURE_TITLE =
+  'shows and tears down the actual completed-result dialog helper';
+
 const CLOCK_INSTALL_TIME = new Date('2026-01-01T00:00:00.000Z');
 const CLOCK_PAUSE_TIME = new Date('2026-01-01T00:01:00.000Z');
 
@@ -154,9 +164,7 @@ test('closes running-game settings before showing the terminal result', async ({
   expect(browserErrors).toEqual([]);
 });
 
-test('shows and tears down the actual completed-result dialog helper', async ({
-  page,
-}) => {
+sourceFixtureTest(COMPLETED_DIALOG_FIXTURE_TITLE, async ({ page }) => {
   const browserErrors = collectPageErrors(page);
   await page.goto('/');
 

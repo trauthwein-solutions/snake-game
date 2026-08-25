@@ -4,6 +4,20 @@ const test = (
   import.meta.env?.MODE === 'test' ? () => undefined : playwrightTest
 ) as typeof playwrightTest;
 
+function sourceFixtureTest(
+  title: string,
+  body: (fixtures: { page: Page }) => Promise<void>,
+): void {
+  test(title, { tag: '@source-fixture' }, body);
+}
+
+const DIRECT_RENDERER_FIXTURE_TITLE =
+  'direct renderer terminal and high-contrast signatures isolate each event';
+const DIRECT_FOOD_FIXTURE_TITLE =
+  'direct food fixtures isolate center and boundary sparks at app cell size';
+const DIRECT_REDUCED_MOTION_FIXTURE_TITLE =
+  'direct reduced-motion fixtures are pixel-identical with or without events';
+
 const CLOCK_INSTALL_TIME = new Date('2026-01-01T00:00:00.000Z');
 const CLOCK_PAUSE_TIME = new Date('2026-01-01T00:01:00.000Z');
 
@@ -352,9 +366,7 @@ const TERMINAL_FIXTURE_STATE = {
   reducedMotion: false,
 } as const;
 
-test('direct renderer terminal and high-contrast signatures isolate each event', async ({
-  page,
-}) => {
+sourceFixtureTest(DIRECT_RENDERER_FIXTURE_TITLE, async ({ page }) => {
   const browserErrors = collectPageErrors(page);
   await page.goto('/');
 
@@ -473,9 +485,7 @@ test('direct renderer terminal and high-contrast signatures isolate each event',
   expect(browserErrors).toEqual([]);
 });
 
-test('direct food fixtures isolate center and boundary sparks at app cell size', async ({
-  page,
-}) => {
+sourceFixtureTest(DIRECT_FOOD_FIXTURE_TITLE, async ({ page }) => {
   const browserErrors = collectPageErrors(page);
   await page.goto('/');
   const positions = [
@@ -532,9 +542,7 @@ test('direct food fixtures isolate center and boundary sparks at app cell size',
   expect(browserErrors).toEqual([]);
 });
 
-test('direct reduced-motion fixtures are pixel-identical with or without events', async ({
-  page,
-}) => {
+sourceFixtureTest(DIRECT_REDUCED_MOTION_FIXTURE_TITLE, async ({ page }) => {
   const browserErrors = collectPageErrors(page);
   await page.goto('/');
   const { signatures } = await renderDirectFixtures(page, [

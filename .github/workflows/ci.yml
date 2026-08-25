@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -68,3 +68,179 @@ jobs:
             test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Validate deployment artifact
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist/index.html
+          test -z "$(find dist -type f -name '*.map' -print -quit)"
+          test -n "$(find dist -type f \( -name '*.js' -o -name '*.css' \) -print -quit)"
+          rm -f dist/SHA256SUMS
+          (
+            cd dist
+            find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > SHA256SUMS
+          )
+          test -s dist/SHA256SUMS
+
+      - name: Upload tested deployment artifact
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: snakish-static-${{ github.sha }}
+          path: |
+            dist/
+            scripts/deploy-static-release.sh
+            scripts/rollback-static-release.sh
+            scripts/smoke-deployment.mjs
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
+  deploy:
+    name: Deploy tested static release
+    needs: ci
+    if: needs.ci.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://snake.trauthwein-solutions.com
+    permissions:
+      contents: read
+    concurrency:
+      group: snakish-production
+      cancel-in-progress: false
+
+    steps:
+      - name: Download tested deployment artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: snakish-static-${{ github.sha }}
+          path: artifact
+
+      - name: Verify deployment artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f artifact/dist/index.html
+          test -f artifact/dist/SHA256SUMS
+          test -n "$(find artifact/dist -type f \( -name '*.js' -o -name '*.css' \) -print -quit)"
+          actual_manifest="$RUNNER_TEMP/snakish-actual-SHA256SUMS"
+          (
+            cd artifact/dist
+            find . -type f ! -name SHA256SUMS -print0 | LC_ALL=C sort -z | xargs -0 sha256sum > "$actual_manifest"
+            cmp SHA256SUMS "$actual_manifest"
+            sha256sum --check --strict SHA256SUMS
+          )
+
+      - name: Deploy release and smoke test
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          RELEASE_SHA: ${{ github.sha }}
+          DEPLOY_TRANSACTION: ${{ github.run_id }}-${{ github.run_attempt }}
+          SMOKE_URL: https://snake.trauthwein-solutions.com
+        run: |
+          set -euo pipefail
+          umask 077
+
+          [[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$DEPLOY_ROOT" =~ ^/[A-Za-z0-9_./-]+$ ]]
+          [[ "$DEPLOY_ROOT" != "/" && "$DEPLOY_ROOT" != *".."* ]]
+          [[ "$DEPLOY_TRANSACTION" =~ ^[1-9][0-9]{0,19}-[1-9][0-9]{0,19}$ ]]
+
+          key_file="$RUNNER_TEMP/snakish-deploy-key"
+          known_hosts_file="$RUNNER_TEMP/snakish-known-hosts"
+          release_archive="$RUNNER_TEMP/snakish-${RELEASE_SHA}-${DEPLOY_TRANSACTION}.tar.gz"
+          cleanup() {
+            rm -f -- "$key_file" "$known_hosts_file" "$release_archive"
+          }
+          trap cleanup EXIT HUP INT TERM
+
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$key_file"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+
+          ssh_options=(
+            -i "$key_file"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=$known_hosts_file"
+            -o GlobalKnownHostsFile=/dev/null
+            -o ForwardAgent=no
+            -o RequestTTY=no
+          )
+          remote="$DEPLOY_USER@$DEPLOY_HOST"
+
+          tar \
+            --sort=name \
+            --mtime='UTC 1970-01-01' \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -czf "$release_archive" \
+            -C artifact/dist \
+            .
+
+          scp "${ssh_options[@]}" \
+            "$release_archive" \
+            "$remote:$DEPLOY_ROOT/incoming-$RELEASE_SHA-$DEPLOY_TRANSACTION.tar.gz"
+
+          set +e
+          ssh "${ssh_options[@]}" "$remote" \
+            sh -s -- "$RELEASE_SHA" "$DEPLOY_ROOT" "$DEPLOY_TRANSACTION" activate \
+            < artifact/scripts/deploy-static-release.sh
+          activation_status=$?
+          set -e
+          if (( activation_status != 0 )); then
+            echo "Activation failed with status $activation_status; attempting rollback" >&2
+            set +e
+            ssh "${ssh_options[@]}" "$remote" \
+              sh -s -- "$RELEASE_SHA" "$DEPLOY_ROOT" "$DEPLOY_TRANSACTION" \
+              < artifact/scripts/rollback-static-release.sh
+            rollback_status=$?
+            set -e
+            echo "Activation rollback finished with status $rollback_status" >&2
+            exit "$activation_status"
+          fi
+
+          set +e
+          node artifact/scripts/smoke-deployment.mjs "$SMOKE_URL"
+          smoke_status=$?
+          set -e
+          if (( smoke_status != 0 )); then
+            echo "Public smoke failed; rolling back release $RELEASE_SHA" >&2
+            set +e
+            ssh "${ssh_options[@]}" "$remote" \
+              sh -s -- "$RELEASE_SHA" "$DEPLOY_ROOT" "$DEPLOY_TRANSACTION" \
+              < artifact/scripts/rollback-static-release.sh
+            rollback_status=$?
+            set -e
+            if (( rollback_status != 0 )); then
+              echo "Rollback failed with status $rollback_status" >&2
+              exit "$rollback_status"
+            fi
+            echo "Rollback completed; deployment remains failed" >&2
+            exit "$smoke_status"
+          fi
+
+          ssh "${ssh_options[@]}" "$remote" \
+            sh -s -- "$RELEASE_SHA" "$DEPLOY_ROOT" "$DEPLOY_TRANSACTION" finalize \
+            < artifact/scripts/deploy-static-release.sh
+
+          ssh "${ssh_options[@]}" "$remote" \
+            sh -s -- "$RELEASE_SHA" "$DEPLOY_ROOT" <<'VERIFY_CURRENT'
+          set -eu
+          [ -L "$2/current" ]
+          [ "$(readlink "$2/current")" = "releases/$1" ]
+          [ -f "$2/releases/$1/index.html" ]
+          VERIFY_CURRENT
