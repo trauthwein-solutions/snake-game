@@ -15,7 +15,9 @@ import type {
   GameCommand,
   GameState,
   GridPosition,
+  WallMode,
 } from '../../src/engine/model';
+import { resolveNextHeadPosition } from '../../src/engine/rules';
 
 const position = (x: number, y: number): GridPosition => ({ x, y });
 
@@ -42,6 +44,12 @@ const runningState = (overrides: Partial<GameState> = {}): GameState => ({
 
 const tick = (state: GameState, nextFood: GridPosition | null): GameState =>
   applyCommand(state, { type: 'tick', nextFood });
+
+const tickWithWalls = (
+  state: GameState,
+  nextFood: GridPosition | null,
+  wallMode: WallMode,
+): GameState => applyCommand(state, { type: 'tick', nextFood }, wallMode);
 
 describe('SNAKISH game engine', () => {
   describe('initial state and lifecycle commands', () => {
@@ -195,6 +203,112 @@ describe('SNAKISH game engine', () => {
   });
 
   describe('simulation ticks', () => {
+    it.each([
+      ['left', position(0, 4), 'left', position(GRID_WIDTH - 1, 4)],
+      ['right', position(GRID_WIDTH - 1, 4), 'right', position(0, 4)],
+      ['top', position(4, 0), 'up', position(4, GRID_HEIGHT - 1)],
+      ['bottom', position(4, GRID_HEIGHT - 1), 'down', position(4, 0)],
+    ] as const)(
+      'resolves a Wrap-around crossing at the %s edge to the opposite cell',
+      (_edge, head, direction, expected) => {
+        expect(resolveNextHeadPosition(head, direction, 'wrapAround')).toEqual(
+          expected,
+        );
+
+        const after = tickWithWalls(
+          runningState({
+            snake: [head, position(5, 5), position(6, 5)],
+            food: position(9, 9),
+            lastAcceptedDirection: direction,
+          }),
+          null,
+          'wrapAround',
+        );
+
+        expect(after.status).toBe('running');
+        expect(after.snake[0]).toEqual(expected);
+        expect(
+          after.snake.every(
+            (segment) =>
+              segment.x >= 0 &&
+              segment.x < GRID_WIDTH &&
+              segment.y >= 0 &&
+              segment.y < GRID_HEIGHT,
+          ),
+        ).toBe(true);
+      },
+    );
+
+    it('defaults omitted wall mode to unchanged Solid collision behavior', () => {
+      const before = runningState({
+        snake: [position(0, 4), position(1, 4), position(2, 4)],
+        food: position(9, 9),
+        lastAcceptedDirection: 'left',
+      });
+
+      expect(tick(before, null)).toEqual(tickWithWalls(before, null, 'solid'));
+      expect(tick(before, null)).toMatchObject({
+        status: 'gameOver',
+        snake: before.snake,
+        score: before.score,
+      });
+      expect(resolveNextHeadPosition(position(0, 4), 'left')).toEqual(
+        position(-1, 4),
+      );
+    });
+
+    it('checks the wrapped destination for body collision and tail vacancy', () => {
+      const bodyCollision = runningState({
+        snake: [
+          position(0, 5),
+          position(GRID_WIDTH - 1, 5),
+          position(GRID_WIDTH - 2, 5),
+          position(GRID_WIDTH - 3, 5),
+        ],
+        food: position(9, 9),
+        lastAcceptedDirection: 'left',
+      });
+      expect(tickWithWalls(bodyCollision, null, 'wrapAround').status).toBe(
+        'gameOver',
+      );
+
+      const tailVacates = runningState({
+        snake: [position(0, 5), position(1, 5), position(GRID_WIDTH - 1, 5)],
+        food: position(9, 9),
+        lastAcceptedDirection: 'left',
+      });
+      expect(tickWithWalls(tailVacates, null, 'wrapAround')).toMatchObject({
+        status: 'running',
+        snake: [position(GRID_WIDTH - 1, 5), position(0, 5), position(1, 5)],
+      });
+    });
+
+    it('checks food at the wrapped destination before growth and scoring', () => {
+      const before = runningState({
+        snake: [position(GRID_WIDTH - 1, 4), position(GRID_WIDTH - 2, 4)],
+        food: position(0, 4),
+        lastAcceptedDirection: 'right',
+      });
+      const nextFood = position(7, 7);
+
+      const after = tickWithWalls(before, nextFood, 'wrapAround');
+
+      expect(after).toMatchObject({
+        status: 'running',
+        score: SCORE_PER_FOOD,
+        food: nextFood,
+      });
+      expect(after.snake).toEqual([position(0, 4), ...before.snake]);
+    });
+
+    it.each(['ready', 'paused', 'gameOver', 'completed'] as const)(
+      'leaves a %s state unchanged in Wrap-around mode',
+      (status) => {
+        const before = runningState({ status });
+        expect(tickWithWalls(before, null, 'wrapAround')).toBe(before);
+      },
+    );
+
     it('moves one grid cell without growing when no food is eaten', () => {
       const before = runningState({
         snake: [position(5, 5), position(4, 5), position(3, 5)],

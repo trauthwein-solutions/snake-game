@@ -4,6 +4,7 @@ import type { Preferences } from '../storage/preferences';
 export interface SettingsControls {
   readonly music: HTMLInputElement;
   readonly musicStyle: HTMLSelectElement;
+  readonly wallMode: HTMLSelectElement;
   readonly soundEffects: HTMLInputElement;
   readonly reducedMotion: HTMLInputElement;
   readonly highContrast: HTMLInputElement;
@@ -18,6 +19,18 @@ function createMusicStyleSetting(): string {
         <option value="pixelDrift">Pixel Drift</option>
         <option value="minimalBeat">Minimal Beat</option>
         <option value="chillGrid">Chill Grid</option>
+      </select>
+    </label>
+  `;
+}
+
+function createWallModeSetting(): string {
+  return `
+    <label class="setting setting--select" for="setting-walls">
+      <span>Walls</span>
+      <select id="setting-walls" name="setting-walls">
+        <option value="solid">Solid</option>
+        <option value="wrapAround">Wrap-around</option>
       </select>
     </label>
   `;
@@ -72,11 +85,12 @@ function createSettingsDialog(
       <button class="icon-button" type="button" aria-label="Close settings">×</button>
     </div>
     <p class="visually-hidden" id="settings-description">
-      Choose audio and visual preferences.
+      Choose audio, gameplay, and visual preferences.
     </p>
     <div class="settings-list">
       ${createSetting('Music', initialSettings.music)}
       ${createMusicStyleSetting()}
+      ${createWallModeSetting()}
       ${createSetting('Sound effects', initialSettings.soundEffects)}
       ${createSetting('Reduced motion', initialSettings.reducedMotion)}
       ${createSetting('High contrast', initialSettings.highContrast)}
@@ -88,6 +102,7 @@ function createSettingsDialog(
   const musicStyle = dialog.querySelector<HTMLSelectElement>(
     '#setting-music-style',
   );
+  const wallMode = dialog.querySelector<HTMLSelectElement>('#setting-walls');
   const soundEffects = dialog.querySelector<HTMLInputElement>(
     '#setting-sound-effects',
   );
@@ -102,6 +117,7 @@ function createSettingsDialog(
     closeButton === null ||
     music === null ||
     musicStyle === null ||
+    wallMode === null ||
     soundEffects === null ||
     reducedMotion === null ||
     highContrast === null
@@ -112,6 +128,7 @@ function createSettingsDialog(
   const controls: SettingsControls = {
     music,
     musicStyle,
+    wallMode,
     soundEffects,
     reducedMotion,
     highContrast,
@@ -119,6 +136,7 @@ function createSettingsDialog(
 
   controls.music.checked = initialSettings.music;
   controls.musicStyle.value = initialSettings.musicStyle;
+  controls.wallMode.value = initialSettings.wallMode;
   controls.soundEffects.checked = initialSettings.soundEffects;
   controls.reducedMotion.checked = initialSettings.reducedMotion;
   controls.highContrast.checked = initialSettings.highContrast;

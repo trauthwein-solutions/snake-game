@@ -63,7 +63,7 @@ test('exposes concise nonvisual arena, score, settings, and result semantics', a
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const settings = page.getByRole('dialog', { name: 'Settings' });
   await expect(settings).toHaveAccessibleDescription(
-    'Choose audio and visual preferences.',
+    'Choose audio, gameplay, and visual preferences.',
   );
   await settings.getByRole('button', { name: 'Close settings' }).click();
 

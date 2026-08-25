@@ -4,13 +4,19 @@ import {
   INITIAL_SNAKE,
   SCORE_PER_FOOD,
 } from './constants';
-import type { Direction, GameCommand, GameState, GridPosition } from './model';
+import type {
+  Direction,
+  GameCommand,
+  GameState,
+  GridPosition,
+  WallMode,
+} from './model';
 import {
   collidesWithSnake,
   isInsideGrid,
   isOppositeDirection,
-  nextHeadPosition,
   positionsAreEqual,
+  resolveNextHeadPosition,
   speedTierForScore,
 } from './rules';
 
@@ -48,6 +54,7 @@ const queueDirection = (state: GameState, direction: Direction): GameState => {
 const advance = (
   state: GameState,
   command: Extract<GameCommand, { readonly type: 'tick' }>,
+  wallMode: WallMode,
 ): GameState => {
   if (state.status !== 'running') {
     return state;
@@ -60,7 +67,7 @@ const advance = (
     return state;
   }
 
-  const nextHead = nextHeadPosition(head, direction);
+  const nextHead = resolveNextHeadPosition(head, direction, wallMode);
   const grows = state.food !== null && positionsAreEqual(nextHead, state.food);
 
   if (
@@ -106,6 +113,7 @@ const advance = (
 export const applyCommand = (
   state: GameState,
   command: GameCommand,
+  wallMode: WallMode = 'solid',
 ): GameState => {
   switch (command.type) {
     case 'start':
@@ -121,7 +129,7 @@ export const applyCommand = (
         ? { ...state, status: 'running' }
         : state;
     case 'tick':
-      return advance(state, command);
+      return advance(state, command, wallMode);
     case 'restart':
       return createInitialState();
   }

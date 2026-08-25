@@ -4,7 +4,7 @@ import {
   MAX_SPEED_TIER,
   SPEED_TIER_THRESHOLDS,
 } from './constants';
-import type { Direction, GridPosition } from './model';
+import type { Direction, GridPosition, WallMode } from './model';
 
 const DIRECTION_OFFSETS: Readonly<Record<Direction, GridPosition>> = {
   up: { x: 0, y: -1 },
@@ -39,6 +39,33 @@ export const nextHeadPosition = (
   return {
     x: head.x + offset.x,
     y: head.y + offset.y,
+  };
+};
+
+export const resolveNextHeadPosition = (
+  head: GridPosition,
+  direction: Direction,
+  wallMode: WallMode = 'solid',
+): GridPosition => {
+  const nextHead = nextHeadPosition(head, direction);
+
+  if (wallMode === 'solid') {
+    return nextHead;
+  }
+
+  return {
+    x:
+      nextHead.x < 0
+        ? GRID_WIDTH - 1
+        : nextHead.x >= GRID_WIDTH
+          ? 0
+          : nextHead.x,
+    y:
+      nextHead.y < 0
+        ? GRID_HEIGHT - 1
+        : nextHead.y >= GRID_HEIGHT
+          ? 0
+          : nextHead.y,
   };
 };
 

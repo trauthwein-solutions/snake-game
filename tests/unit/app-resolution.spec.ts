@@ -116,6 +116,9 @@ class FakeElement {
       if (selector === '[data-touch-controls]') {
         return this.ownerDocument.touchControlsMount;
       }
+      if (selector === '#arena-instructions') {
+        return this.ownerDocument.instructions;
+      }
     }
     if (this.tagName === 'dialog') {
       if (selector === '.icon-button') {
@@ -129,6 +132,9 @@ class FakeElement {
       }
       if (selector === '#setting-music-style') {
         return this.ownerDocument.musicStyleControl;
+      }
+      if (selector === '#setting-walls') {
+        return this.ownerDocument.wallModeControl;
       }
       if (selector === '#setting-sound-effects') {
         return this.ownerDocument.soundEffectsControl;
@@ -238,9 +244,11 @@ class FakeDocument {
   readonly restartButton = new FakeElement('button', this);
   readonly canvas = new FakeElement('canvas', this);
   readonly touchControlsMount = new FakeElement('div', this);
+  readonly instructions = new FakeElement('p', this);
   readonly closeButton = new FakeElement('button', this);
   readonly musicControl = new FakeElement('input', this);
   readonly musicStyleControl = new FakeElement('select', this);
+  readonly wallModeControl = new FakeElement('select', this);
   readonly soundEffectsControl = new FakeElement('input', this);
   readonly reducedMotionControl = new FakeElement('input', this);
   readonly highContrastControl = new FakeElement('input', this);
@@ -302,6 +310,7 @@ describe('mountApp resolution lifecycle', () => {
     expect(document.eventListeners.get('visibilitychange')?.size).toBe(1);
     expect(document.pauseButton.eventListeners.get('click')?.size).toBe(1);
     expect(document.musicControl.eventListeners.get('change')?.size).toBe(1);
+    expect(document.wallModeControl.eventListeners.get('change')?.size).toBe(1);
     expect(
       document.soundEffectsControl.eventListeners.get('change')?.size,
     ).toBe(1);
@@ -365,6 +374,7 @@ describe('mountApp resolution lifecycle', () => {
     expect(document.eventListeners.get('visibilitychange')?.size).toBe(0);
     expect(document.pauseButton.eventListeners.get('click')?.size).toBe(0);
     expect(document.musicControl.eventListeners.get('change')?.size).toBe(0);
+    expect(document.wallModeControl.eventListeners.get('change')?.size).toBe(0);
     expect(
       document.soundEffectsControl.eventListeners.get('change')?.size,
     ).toBe(0);
@@ -387,6 +397,7 @@ describe('mountApp resolution lifecycle', () => {
     expect(document.eventListeners.get('visibilitychange')?.size).toBe(1);
     expect(document.pauseButton.eventListeners.get('click')?.size).toBe(1);
     expect(document.musicControl.eventListeners.get('change')?.size).toBe(1);
+    expect(document.wallModeControl.eventListeners.get('change')?.size).toBe(1);
     expect(
       document.defaultView.localStorage.getItem.mock.calls.filter(
         ([key]) => key === 'snakish.preferences.v1',
@@ -397,5 +408,6 @@ describe('mountApp resolution lifecycle', () => {
     expect(document.eventListeners.get('visibilitychange')?.size).toBe(0);
     expect(document.pauseButton.eventListeners.get('click')?.size).toBe(0);
     expect(document.musicControl.eventListeners.get('change')?.size).toBe(0);
+    expect(document.wallModeControl.eventListeners.get('change')?.size).toBe(0);
   });
 });

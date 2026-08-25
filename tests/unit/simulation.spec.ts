@@ -120,6 +120,73 @@ describe('advanceSimulation', () => {
     expect(randomSource).not.toHaveBeenCalled();
   });
 
+  it('defaults omitted mode to Solid and keeps the edge terminal', () => {
+    const before = runningState({
+      snake: [position(0, 4), position(1, 4), position(2, 4)],
+      food: position(9, 9),
+      lastAcceptedDirection: 'left',
+    });
+    const randomSource = vi.fn(() => 0.5);
+
+    const after = advanceSimulation(before, randomSource);
+
+    expect(after.status).toBe('gameOver');
+    expect(after.snake).toBe(before.snake);
+    expect(randomSource).not.toHaveBeenCalled();
+  });
+
+  it('wraps onto food, grows and scores using one random selection', () => {
+    const before = runningState({
+      snake: [position(GRID_WIDTH - 1, 4), position(GRID_WIDTH - 2, 4)],
+      food: position(0, 4),
+      lastAcceptedDirection: 'right',
+    });
+    const randomSource = vi.fn(() => 0);
+
+    const after = advanceSimulation(before, randomSource, 'wrapAround');
+
+    expect(after.status).toBe('running');
+    expect(after.snake).toEqual([position(0, 4), ...before.snake]);
+    expect(after.score).toBe(SCORE_PER_FOOD);
+    expect(after.food).toEqual(position(0, 0));
+    expect(randomSource).toHaveBeenCalledOnce();
+    expect(
+      after.snake.every(
+        (segment) =>
+          segment.x >= 0 &&
+          segment.x < GRID_WIDTH &&
+          segment.y >= 0 &&
+          segment.y < GRID_HEIGHT,
+      ),
+    ).toBe(true);
+  });
+
+  it('applies wrapped self-collision and tail-vacate semantics before randomness', () => {
+    const collision = runningState({
+      snake: [
+        position(0, 5),
+        position(GRID_WIDTH - 1, 5),
+        position(GRID_WIDTH - 2, 5),
+      ],
+      food: position(9, 9),
+      lastAcceptedDirection: 'left',
+    });
+    const randomSource = vi.fn(() => 0.5);
+    expect(
+      advanceSimulation(collision, randomSource, 'wrapAround').status,
+    ).toBe('gameOver');
+    expect(randomSource).not.toHaveBeenCalled();
+
+    const tailVacates = runningState({
+      snake: [position(0, 5), position(1, 5), position(GRID_WIDTH - 1, 5)],
+      food: position(9, 9),
+      lastAcceptedDirection: 'left',
+    });
+    expect(
+      advanceSimulation(tailVacates, randomSource, 'wrapAround').snake,
+    ).toEqual([position(GRID_WIDTH - 1, 5), position(0, 5), position(1, 5)]);
+  });
+
   it.each([
     {
       name: 'wall',
@@ -169,8 +236,14 @@ describe('advanceSimulation', () => {
       const expected = applyCommand(before, { type: 'tick', nextFood: null });
 
       const after = advanceSimulation(before, randomSource);
+      const wrappedAfter = advanceSimulation(
+        before,
+        randomSource,
+        'wrapAround',
+      );
 
       expect(after).toBe(expected);
+      expect(wrappedAfter).toBe(expected);
       expect(randomSource).not.toHaveBeenCalled();
     },
   );
@@ -233,6 +306,19 @@ describe('advanceSimulation', () => {
     expect(after.food).toBeNull();
     expect(after.score).toBe(before.score + SCORE_PER_FOOD);
     expect(after.speedTier).toBe(3);
+    expect(after.snake).toHaveLength(GRID_WIDTH * GRID_HEIGHT);
+    expect(after.snake[0]).toEqual(position(0, 0));
+    expect(randomSource).not.toHaveBeenCalled();
+  });
+
+  it('keeps board completion correct in Wrap-around mode', () => {
+    const before = stateBeforeFinalFood();
+    const randomSource = vi.fn(() => 0.75);
+
+    const after = advanceSimulation(before, randomSource, 'wrapAround');
+
+    expect(after.status).toBe('completed');
+    expect(after.food).toBeNull();
     expect(after.snake).toHaveLength(GRID_WIDTH * GRID_HEIGHT);
     expect(after.snake[0]).toEqual(position(0, 0));
     expect(randomSource).not.toHaveBeenCalled();
