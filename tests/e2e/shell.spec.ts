@@ -125,7 +125,7 @@ test('game-over dialog is initially closed and exposes its result actions', asyn
   ).toHaveCount(1);
   await expect(
     gameOverDialog.getByRole('button', {
-      name: 'Return to title',
+      name: 'Back to start',
       includeHidden: true,
     }),
   ).toHaveCount(1);

@@ -136,12 +136,12 @@ test('completes a full lifecycle using only keyboard input with intentional focu
   await expect(result).toBeVisible();
   await page.keyboard.press('Tab');
   await expect(
-    result.getByRole('button', { name: 'Return to title' }),
+    result.getByRole('button', { name: 'Back to start' }),
   ).toBeFocused();
   await page.keyboard.press('Enter');
   await expect(app).toHaveAttribute('data-game-status', 'ready');
   await expect(page.getByRole('button', { name: 'Play' })).toBeFocused();
-  await expect(page.getByRole('status')).toHaveText('Returned to title.');
+  await expect(page.getByRole('status')).toHaveText('Returned to start.');
   expect(browserErrors).toEqual([]);
 });
 

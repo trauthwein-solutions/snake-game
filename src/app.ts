@@ -584,7 +584,7 @@ export function mountApp(
     updateStateView();
     presentationLoop.redraw();
     syncAudio();
-    announce(announcer, 'Returned to title.');
+    announce(announcer, 'Returned to start.');
     playButton.focus();
   };
 
