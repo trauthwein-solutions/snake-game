@@ -3,9 +3,24 @@ import type { Preferences } from '../storage/preferences';
 
 export interface SettingsControls {
   readonly music: HTMLInputElement;
+  readonly musicStyle: HTMLSelectElement;
   readonly soundEffects: HTMLInputElement;
   readonly reducedMotion: HTMLInputElement;
   readonly highContrast: HTMLInputElement;
+}
+
+function createMusicStyleSetting(): string {
+  return `
+    <label class="setting setting--select" for="setting-music-style">
+      <span>Music style</span>
+      <select id="setting-music-style" name="setting-music-style">
+        <option value="neonPulse">Neon Pulse</option>
+        <option value="pixelDrift">Pixel Drift</option>
+        <option value="minimalBeat">Minimal Beat</option>
+        <option value="chillGrid">Chill Grid</option>
+      </select>
+    </label>
+  `;
 }
 
 interface GameDialogs {
@@ -61,6 +76,7 @@ function createSettingsDialog(
     </p>
     <div class="settings-list">
       ${createSetting('Music', initialSettings.music)}
+      ${createMusicStyleSetting()}
       ${createSetting('Sound effects', initialSettings.soundEffects)}
       ${createSetting('Reduced motion', initialSettings.reducedMotion)}
       ${createSetting('High contrast', initialSettings.highContrast)}
@@ -69,6 +85,9 @@ function createSettingsDialog(
 
   const closeButton = dialog.querySelector<HTMLButtonElement>('.icon-button');
   const music = dialog.querySelector<HTMLInputElement>('#setting-music');
+  const musicStyle = dialog.querySelector<HTMLSelectElement>(
+    '#setting-music-style',
+  );
   const soundEffects = dialog.querySelector<HTMLInputElement>(
     '#setting-sound-effects',
   );
@@ -82,6 +101,7 @@ function createSettingsDialog(
   if (
     closeButton === null ||
     music === null ||
+    musicStyle === null ||
     soundEffects === null ||
     reducedMotion === null ||
     highContrast === null
@@ -91,12 +111,14 @@ function createSettingsDialog(
 
   const controls: SettingsControls = {
     music,
+    musicStyle,
     soundEffects,
     reducedMotion,
     highContrast,
   };
 
   controls.music.checked = initialSettings.music;
+  controls.musicStyle.value = initialSettings.musicStyle;
   controls.soundEffects.checked = initialSettings.soundEffects;
   controls.reducedMotion.checked = initialSettings.reducedMotion;
   controls.highContrast.checked = initialSettings.highContrast;

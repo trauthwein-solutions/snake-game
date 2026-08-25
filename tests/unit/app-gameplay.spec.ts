@@ -15,6 +15,7 @@ class FakeElement {
   id = '';
   innerHTML = '';
   textContent = '';
+  value = '';
   readonly children: FakeElement[] = [];
   readonly listeners = new Map<string, Set<Listener>>();
   focus = vi.fn();
@@ -70,6 +71,8 @@ class FakeElement {
       if (selector === '.icon-button') return this.ownerDocument.closeButton;
       if (selector === 'input') return this.ownerDocument.firstControl;
       if (selector === '#setting-music') return this.ownerDocument.musicControl;
+      if (selector === '#setting-music-style')
+        return this.ownerDocument.musicStyleControl;
       if (selector === '#setting-sound-effects')
         return this.ownerDocument.soundEffectsControl;
       if (selector === '#setting-reduced-motion')
@@ -199,6 +202,7 @@ class FakeDocument {
   readonly touchControlsMount = new FakeElement('div', this);
   readonly closeButton = new FakeElement('button', this);
   readonly musicControl = new FakeElement('input', this);
+  readonly musicStyleControl = new FakeElement('select', this);
   readonly soundEffectsControl = new FakeElement('input', this);
   readonly reducedMotionControl = new FakeElement('input', this);
   readonly highContrastControl = new FakeElement('input', this);
@@ -335,6 +339,7 @@ const dialogElements = vi.hoisted(() => ({
   settingsControls: undefined as
     | {
         music: FakeElement;
+        musicStyle: FakeElement;
         soundEffects: FakeElement;
         reducedMotion: FakeElement;
         highContrast: FakeElement;
@@ -348,6 +353,7 @@ vi.mock('../../src/ui/dialogs', () => ({
       settingsButton: FakeElement,
       initialSettings: {
         music: boolean;
+        musicStyle: string;
         soundEffects: boolean;
         reducedMotion: boolean;
         highContrast: boolean;
@@ -360,12 +366,17 @@ vi.mock('../../src/ui/dialogs', () => ({
       dialogElements.returnToTitleButton = new FakeElement('button', document);
       dialogElements.settingsControls = {
         music: new FakeElement('input', document),
+        musicStyle: new FakeElement('select', document),
         soundEffects: new FakeElement('input', document),
         reducedMotion: new FakeElement('input', document),
         highContrast: new FakeElement('input', document),
       };
+      for (const key of ['music'] as const) {
+        dialogElements.settingsControls[key].checked = initialSettings[key];
+      }
+      dialogElements.settingsControls.musicStyle.value =
+        initialSettings.musicStyle;
       for (const key of [
-        'music',
         'soundEffects',
         'reducedMotion',
         'highContrast',
@@ -525,6 +536,7 @@ describe('mountApp gameplay lifecycle', () => {
 
     expect(dialogElements.settingsControls).toMatchObject({
       music: { checked: false },
+      musicStyle: { value: 'neonPulse' },
       soundEffects: { checked: false },
       reducedMotion: { checked: true },
       highContrast: { checked: true },
@@ -567,11 +579,11 @@ describe('mountApp gameplay lifecycle', () => {
     expect(document.defaultView.localStorage.setItem.mock.calls).toEqual([
       [
         'snakish.preferences.v1',
-        '{"version":1,"music":false,"soundEffects":true,"reducedMotion":false,"highContrast":false}',
+        '{"version":2,"music":false,"musicStyle":"neonPulse","soundEffects":true,"reducedMotion":false,"highContrast":false}',
       ],
       [
         'snakish.preferences.v1',
-        '{"version":1,"music":false,"soundEffects":false,"reducedMotion":false,"highContrast":false}',
+        '{"version":2,"music":false,"musicStyle":"neonPulse","soundEffects":false,"reducedMotion":false,"highContrast":false}',
       ],
     ]);
     expect(harness.presentationRedraw).not.toHaveBeenCalled();
@@ -672,6 +684,7 @@ describe('mountApp gameplay lifecycle', () => {
       status: 'ready',
       runId: 0,
       musicEnabled: true,
+      musicStyle: 'neonPulse',
       soundEffectsEnabled: true,
     });
 
@@ -780,6 +793,38 @@ describe('mountApp gameplay lifecycle', () => {
     expect(document.defaultView.localStorage.setItem).toHaveBeenCalledOnce();
   });
 
+  it('persists a migrated style change canonically and syncs the latest snapshot once', () => {
+    const { audio, factory } = fakeAudio();
+    const { document } = mountHarness((fakeDocument) => {
+      fakeDocument.defaultView.localStorage.values.set(
+        'snakish.preferences.v1',
+        '{"version":1,"music":true,"soundEffects":false,"reducedMotion":true,"highContrast":false}',
+      );
+    }, factory);
+    const control = dialogElements.settingsControls?.musicStyle;
+    if (control === undefined) throw new Error('Expected Music style.');
+    expect(control.value).toBe('neonPulse');
+    vi.mocked(audio.sync).mockClear();
+    document.defaultView.localStorage.setItem.mockClear();
+
+    control.value = 'chillGrid';
+    control.dispatchEvent(new Event('change'));
+
+    expect(document.defaultView.localStorage.setItem).toHaveBeenCalledWith(
+      'snakish.preferences.v1',
+      '{"version":2,"music":true,"musicStyle":"chillGrid","soundEffects":false,"reducedMotion":true,"highContrast":false}',
+    );
+    expect(vi.mocked(audio.sync).mock.calls).toEqual([
+      [
+        expect.objectContaining({
+          musicEnabled: true,
+          musicStyle: 'chillGrid',
+          soundEffectsEnabled: false,
+        }),
+      ],
+    ]);
+  });
+
   it('keeps automatic pause silent and audio toggles independent with no reduced-motion coupling', () => {
     const { audio, factory } = fakeAudio();
     const { document } = mountHarness(undefined, factory);
@@ -881,9 +926,13 @@ describe('mountApp gameplay lifecycle', () => {
     expect(vi.mocked(audio.sync).mock.calls[0]).toHaveLength(1);
     expect(audio.play).not.toHaveBeenCalled();
 
+    const musicStyle = dialogElements.settingsControls?.musicStyle;
+    expect(musicStyle?.listeners.get('change')?.size).toBe(1);
+
     teardown();
     teardown();
     expect(audio.dispose).toHaveBeenCalledOnce();
+    expect(musicStyle?.listeners.get('change')?.size).toBe(0);
   });
 
   it('does not write for scores below or tied with the persisted best', () => {
@@ -1670,8 +1719,9 @@ describe('gameplay UI helpers', () => {
     const dialogs = createDialogs(
       document.settingsButton as unknown as HTMLButtonElement,
       {
-        version: 1,
+        version: 2,
         music: true,
+        musicStyle: 'neonPulse',
         soundEffects: true,
         reducedMotion: false,
         highContrast: false,
@@ -1708,8 +1758,9 @@ describe('gameplay UI helpers', () => {
     const dialogs = createDialogs(
       document.settingsButton as unknown as HTMLButtonElement,
       {
-        version: 1,
+        version: 2,
         music: false,
+        musicStyle: 'pixelDrift',
         soundEffects: true,
         reducedMotion: true,
         highContrast: false,
@@ -1717,6 +1768,7 @@ describe('gameplay UI helpers', () => {
     );
 
     expect(dialogs.settingsControls.music.checked).toBe(false);
+    expect(dialogs.settingsControls.musicStyle.value).toBe('pixelDrift');
     expect(dialogs.settingsControls.soundEffects.checked).toBe(true);
     expect(dialogs.settingsControls.reducedMotion.checked).toBe(true);
     expect(dialogs.settingsControls.highContrast.checked).toBe(false);
@@ -1752,8 +1804,9 @@ describe('gameplay UI helpers', () => {
     const dialogs = createDialogs(
       document.settingsButton as unknown as HTMLButtonElement,
       {
-        version: 1,
+        version: 2,
         music: true,
+        musicStyle: 'neonPulse',
         soundEffects: true,
         reducedMotion: false,
         highContrast: false,

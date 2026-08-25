@@ -1,5 +1,7 @@
+import type { MusicStyle } from '../storage/preferences';
+
 export type SynthesizedGameAudio = Readonly<{
-  music: Float32Array;
+  musicStyles: Readonly<Record<MusicStyle, Float32Array>>;
   food: Float32Array;
   pause: Float32Array;
   resume: Float32Array;
@@ -35,6 +37,10 @@ const synthesizeNotes = (
       Math.floor(notePosition),
     );
     const frequency = frequencies[noteIndex] ?? frequencies[0] ?? 220;
+    if (frequency === 0) {
+      samples[index] = 0;
+      continue;
+    }
     phase += (TAU * frequency) / sampleRate;
     const voice = Math.sin(phase) * 0.8 + Math.sin(phase * 2) * 0.2;
     samples[index] = peak * envelope(position) * voice;
@@ -49,12 +55,32 @@ export function synthesizeGameAudio(sampleRate: number): SynthesizedGameAudio {
   }
 
   return Object.freeze({
-    music: synthesizeNotes(
-      sampleRate,
-      [164.81, 196, 246.94, 220, 164.81, 196, 293.66, 246.94],
-      0.24,
-      0.18,
-    ),
+    musicStyles: Object.freeze({
+      neonPulse: synthesizeNotes(
+        sampleRate,
+        [164.81, 196, 246.94, 220, 164.81, 196, 293.66, 246.94],
+        0.24,
+        0.18,
+      ),
+      pixelDrift: synthesizeNotes(
+        sampleRate,
+        [261.63, 329.63, 392, 523.25, 392, 329.63, 293.66, 349.23],
+        0.12,
+        0.15,
+      ),
+      minimalBeat: synthesizeNotes(
+        sampleRate,
+        [110, 0, 110, 0, 146.83, 0, 0, 0],
+        0.22,
+        0.16,
+      ),
+      chillGrid: synthesizeNotes(
+        sampleRate,
+        [130.81, 164.81, 196, 164.81, 146.83, 174.61],
+        0.34,
+        0.13,
+      ),
+    }),
     food: synthesizeNotes(sampleRate, [659.25, 880], 0.055, 0.24),
     pause: synthesizeNotes(sampleRate, [392, 293.66], 0.075, 0.2),
     resume: synthesizeNotes(sampleRate, [293.66, 440], 0.075, 0.2),

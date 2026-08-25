@@ -24,6 +24,7 @@ import {
 } from './storage/best-score';
 import {
   loadPreferences,
+  isMusicStyle,
   savePreferences,
   type Preferences,
   type PreferencesStorage,
@@ -176,6 +177,7 @@ export function mountApp(
     status: state.status,
     runId,
     musicEnabled: preferences.music,
+    musicStyle: preferences.musicStyle,
     soundEffectsEnabled: preferences.soundEffects,
   });
   const syncAudio = (activation?: Event): void => {
@@ -354,6 +356,25 @@ export function mountApp(
     control.addEventListener('change', handleChange);
     return { control, handleChange, handleClick };
   });
+
+  const musicStyleControl = dialogs.settingsControls.musicStyle;
+  const handleMusicStyleChange = (): void => {
+    if (
+      tornDown ||
+      !isMusicStyle(musicStyleControl.value) ||
+      musicStyleControl.value === preferences.musicStyle
+    ) {
+      return;
+    }
+
+    preferences = Object.freeze({
+      ...preferences,
+      musicStyle: musicStyleControl.value,
+    });
+    savePreferences(storage, preferences);
+    syncAudio();
+  };
+  musicStyleControl.addEventListener('change', handleMusicStyleChange);
 
   let resolutionQuery: MediaQueryList | undefined;
   let resolutionDevicePixelRatio: number | undefined;
@@ -611,6 +632,7 @@ export function mountApp(
       control.removeEventListener('click', handleClick);
       control.removeEventListener('change', handleChange);
     }
+    musicStyleControl.removeEventListener('change', handleMusicStyleChange);
     dialogs.teardown();
     scheduler.dispose();
     teardownInput();

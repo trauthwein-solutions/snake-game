@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { GameAudioSnapshot } from '../../src/audio/game-audio';
 import { synthesizeGameAudio } from '../../src/audio/synthesis';
 import { createWebGameAudio } from '../../src/audio/web-audio';
+import { MUSIC_STYLES } from '../../src/storage/preferences';
 
 describe('procedural audio synthesis', () => {
   it('is deterministic, finite, restrained, and silent at every boundary', () => {
@@ -10,14 +11,20 @@ describe('procedural audio synthesis', () => {
     const second = synthesizeGameAudio(8_000);
 
     expect(Object.keys(first)).toEqual([
-      'music',
+      'musicStyles',
       'food',
       'pause',
       'resume',
       'gameOver',
       'completed',
     ]);
-    for (const name of Object.keys(first) as (keyof typeof first)[]) {
+    for (const name of [
+      'food',
+      'pause',
+      'resume',
+      'gameOver',
+      'completed',
+    ] as const) {
       const samples = first[name];
       expect(samples).toEqual(second[name]);
       expect(samples.length).toBeGreaterThan(100);
@@ -26,6 +33,30 @@ describe('procedural audio synthesis', () => {
       expect(samples.every(Number.isFinite)).toBe(true);
       expect(Math.max(...samples.map(Math.abs))).toBeLessThanOrEqual(0.35);
     }
+    for (const style of MUSIC_STYLES) {
+      const samples = first.musicStyles[style];
+      expect(samples).toEqual(second.musicStyles[style]);
+      expect(samples.length).toBeGreaterThan(100);
+      expect(samples[0]).toBe(0);
+      expect(samples.at(-1)).toBe(0);
+      expect(samples.every(Number.isFinite)).toBe(true);
+      expect(Math.max(...samples.map(Math.abs))).toBeLessThanOrEqual(0.25);
+    }
+  });
+
+  it('creates four structurally distinct loop-safe music styles while sharing SFX', () => {
+    const synthesized = synthesizeGameAudio(8_000);
+    const signatures = MUSIC_STYLES.map((style) => {
+      const samples = synthesized.musicStyles[style];
+      return `${samples.length}:${Array.from(samples.slice(0, 512)).join(',')}`;
+    });
+
+    expect(new Set(signatures).size).toBe(4);
+    expect(
+      synthesized.musicStyles.minimalBeat.filter((sample) => sample === 0)
+        .length,
+    ).toBeGreaterThan(synthesized.musicStyles.minimalBeat.length / 4);
+    expect(synthesized.food).toEqual(synthesizeGameAudio(8_000).food);
   });
 
   it('gives every cue a distinct waveform', () => {
@@ -102,6 +133,7 @@ const snapshot = (
   status: 'ready',
   runId: 0,
   musicEnabled: true,
+  musicStyle: 'neonPulse',
   soundEffectsEnabled: true,
   ...overrides,
 });
@@ -176,6 +208,323 @@ describe('Web Audio lifecycle', () => {
     expect(contexts[0]?.sources).toHaveLength(1);
     expect(contexts[0]?.sources[0]).toMatchObject({ loop: true });
     expect(contexts[0]?.sources[0]?.start).toHaveBeenCalledOnce();
+  });
+
+  it('initializes a persisted non-default style with exactly one loop source', () => {
+    const { audio, contexts } = audioHarness();
+    audio.sync(
+      snapshot({ status: 'running', runId: 1, musicStyle: 'chillGrid' }),
+      trustedActivation(),
+    );
+
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]?.sources).toHaveLength(1);
+    expect(contexts[0]?.sources[0]?.start).toHaveBeenCalledOnce();
+  });
+
+  it('replaces a running music style exactly once without duplicating context or touching SFX', () => {
+    const { audio, contexts } = audioHarness();
+    audio.sync(snapshot({ status: 'running', runId: 1 }), trustedActivation());
+    const context = contexts[0];
+    if (context === undefined) throw new Error('Expected an AudioContext.');
+    audio.play('food');
+    const neon = context.sources[0];
+    const food = context.sources[1];
+
+    audio.sync(
+      snapshot({ status: 'running', runId: 1, musicStyle: 'pixelDrift' }),
+    );
+    audio.sync(
+      snapshot({ status: 'running', runId: 1, musicStyle: 'pixelDrift' }),
+    );
+
+    const pixel = context.sources[2];
+    expect(contexts).toHaveLength(1);
+    expect(context.sources).toHaveLength(3);
+    expect(neon?.stop).toHaveBeenCalledOnce();
+    expect(neon?.disconnect).toHaveBeenCalledOnce();
+    expect(pixel).toMatchObject({ loop: true });
+    expect(pixel?.start).toHaveBeenCalledOnce();
+    expect(pixel?.buffer).not.toBe(neon?.buffer);
+    expect(food?.stop).not.toHaveBeenCalled();
+    expect(context.gains[0]?.gain.value).toBeGreaterThan(0);
+  });
+
+  it.each([
+    {
+      stage: 'createBufferSource',
+      arrange(context: FakeContext) {
+        context.createBufferSource.mockImplementationOnce(() => {
+          throw new Error('source creation rejected');
+        });
+        return undefined;
+      },
+    },
+    {
+      stage: 'buffer assignment',
+      arrange(context: FakeContext) {
+        const candidate = new FakeSource();
+        Object.defineProperty(candidate, 'buffer', {
+          configurable: true,
+          set() {
+            throw new Error('buffer rejected');
+          },
+        });
+        context.createBufferSource.mockImplementationOnce(() => candidate);
+        return candidate;
+      },
+    },
+    {
+      stage: 'connect',
+      arrange(context: FakeContext) {
+        const candidate = new FakeSource();
+        candidate.connect.mockImplementation(() => {
+          throw new Error('connect rejected');
+        });
+        context.createBufferSource.mockImplementationOnce(() => candidate);
+        return candidate;
+      },
+    },
+  ])(
+    'preserves the exact running music source when candidate $stage fails and retries later',
+    ({ arrange }) => {
+      const { audio, contexts } = audioHarness();
+      audio.sync(
+        snapshot({ status: 'running', runId: 1 }),
+        trustedActivation(),
+      );
+      const context = contexts[0];
+      if (context === undefined) throw new Error('Expected an AudioContext.');
+      const original = context.sources[0];
+      const candidate = arrange(context);
+      const requested = snapshot({
+        status: 'running',
+        runId: 1,
+        musicStyle: 'pixelDrift',
+      });
+
+      audio.sync(requested);
+
+      expect(original?.stop).not.toHaveBeenCalled();
+      expect(original?.disconnect).not.toHaveBeenCalled();
+      expect(original?.onended).not.toBeNull();
+      if (candidate !== undefined) {
+        expect(candidate.stop).toHaveBeenCalledOnce();
+        expect(candidate.disconnect).toHaveBeenCalledOnce();
+        expect(candidate.onended).toBeNull();
+      }
+
+      audio.sync(requested);
+      const replacement = context.sources.at(-1);
+      expect(replacement).not.toBe(original);
+      expect(replacement?.start).toHaveBeenCalledOnce();
+      expect(replacement?.buffer).not.toBe(original?.buffer);
+      expect(original?.stop).toHaveBeenCalledOnce();
+      expect(original?.disconnect).toHaveBeenCalledOnce();
+      if (candidate !== undefined) {
+        expect(candidate.stop).toHaveBeenCalledOnce();
+        expect(candidate.disconnect).toHaveBeenCalledOnce();
+      }
+    },
+  );
+
+  it('cleans a failed-start candidate, recovers the old style without overlap, and retries the requested style', () => {
+    const { audio, contexts } = audioHarness();
+    audio.sync(snapshot({ status: 'running', runId: 1 }), trustedActivation());
+    const context = contexts[0];
+    if (context === undefined) throw new Error('Expected an AudioContext.');
+    const original = context.sources[0];
+    const failedCandidate = new FakeSource();
+    failedCandidate.start.mockImplementation(() => {
+      throw new Error('start rejected');
+    });
+    context.createBufferSource.mockImplementationOnce(() => failedCandidate);
+    const requested = snapshot({
+      status: 'running',
+      runId: 1,
+      musicStyle: 'pixelDrift',
+    });
+
+    audio.sync(requested);
+
+    const recovered = context.sources.at(-1);
+    expect(original?.stop).toHaveBeenCalledOnce();
+    expect(original?.disconnect).toHaveBeenCalledOnce();
+    expect(failedCandidate.stop).toHaveBeenCalledOnce();
+    expect(failedCandidate.disconnect).toHaveBeenCalledOnce();
+    expect(recovered?.buffer).toBe(original?.buffer);
+    expect(recovered?.start).toHaveBeenCalledOnce();
+    expect(original?.stop.mock.invocationCallOrder[0]).toBeLessThan(
+      failedCandidate.start.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(failedCandidate.stop.mock.invocationCallOrder[0]).toBeLessThan(
+      recovered?.start.mock.invocationCallOrder[0] ?? 0,
+    );
+
+    audio.sync(requested);
+    const replacement = context.sources.at(-1);
+    expect(recovered?.stop).toHaveBeenCalledOnce();
+    expect(recovered?.disconnect).toHaveBeenCalledOnce();
+    expect(replacement?.buffer).not.toBe(original?.buffer);
+    expect(replacement?.start).toHaveBeenCalledOnce();
+  });
+
+  it('leaves music ownership empty when requested start and old-style recovery both fail, then retries', () => {
+    const { audio, contexts } = audioHarness();
+    audio.sync(snapshot({ status: 'running', runId: 1 }), trustedActivation());
+    const context = contexts[0];
+    if (context === undefined) throw new Error('Expected an AudioContext.');
+    const original = context.sources[0];
+    const failures = [new FakeSource(), new FakeSource()];
+    for (const source of failures) {
+      source.start.mockImplementation(() => {
+        throw new Error('start rejected');
+      });
+      context.createBufferSource.mockImplementationOnce(() => source);
+    }
+    const requested = snapshot({
+      status: 'running',
+      runId: 1,
+      musicStyle: 'pixelDrift',
+    });
+
+    audio.sync(requested);
+
+    expect(original?.stop).toHaveBeenCalledOnce();
+    for (const source of failures) {
+      expect(source.stop).toHaveBeenCalledOnce();
+      expect(source.disconnect).toHaveBeenCalledOnce();
+    }
+
+    audio.sync(requested);
+    const replacement = context.sources.at(-1);
+    expect(replacement?.buffer).not.toBe(original?.buffer);
+    expect(replacement?.start).toHaveBeenCalledOnce();
+  });
+
+  it('recreates the latest requested style once when the exact current music source ends', () => {
+    const { audio, contexts } = audioHarness();
+    audio.sync(snapshot({ status: 'running', runId: 1 }), trustedActivation());
+    const context = contexts[0];
+    if (context === undefined) throw new Error('Expected an AudioContext.');
+    const ended = context.sources[0];
+    const onended = ended?.onended;
+
+    expect(onended).not.toBeNull();
+    onended?.();
+
+    const recovered = context.sources[1];
+    expect(ended?.stop).not.toHaveBeenCalled();
+    expect(ended?.disconnect).toHaveBeenCalledOnce();
+    expect(ended?.onended).toBeNull();
+    expect(recovered?.buffer).toBe(ended?.buffer);
+    expect(recovered?.start).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a stale music onended callback after style replacement', () => {
+    const { audio, contexts } = audioHarness();
+    audio.sync(snapshot({ status: 'running', runId: 1 }), trustedActivation());
+    const context = contexts[0];
+    if (context === undefined) throw new Error('Expected an AudioContext.');
+    const old = context.sources[0];
+    const staleOnEnded = old?.onended;
+    audio.sync(
+      snapshot({ status: 'running', runId: 1, musicStyle: 'pixelDrift' }),
+    );
+    const current = context.sources[1];
+
+    staleOnEnded?.();
+
+    expect(context.sources).toHaveLength(2);
+    expect(current?.stop).not.toHaveBeenCalled();
+    expect(current?.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('neutralizes a retained music onended callback during disposal', () => {
+    const { audio, contexts } = audioHarness();
+    audio.sync(snapshot({ status: 'running' }), trustedActivation());
+    const context = contexts[0];
+    if (context === undefined) throw new Error('Expected an AudioContext.');
+    const music = context.sources[0];
+    const retainedOnEnded = music?.onended;
+
+    audio.dispose();
+    retainedOnEnded?.();
+
+    expect(music?.onended).toBeNull();
+    expect(music?.stop).toHaveBeenCalledOnce();
+    expect(music?.disconnect).toHaveBeenCalledOnce();
+    expect(context.sources).toHaveLength(1);
+  });
+
+  it('keeps muted style changes silent and reveals only the selected style when enabled', () => {
+    const { audio, contexts } = audioHarness();
+    audio.sync(
+      snapshot({ status: 'running', runId: 1, musicEnabled: false }),
+      trustedActivation(),
+    );
+    const context = contexts[0];
+    if (context === undefined) throw new Error('Expected an AudioContext.');
+    const neon = context.sources[0];
+
+    audio.sync(
+      snapshot({
+        status: 'running',
+        runId: 1,
+        musicEnabled: false,
+        musicStyle: 'chillGrid',
+      }),
+    );
+    const chill = context.sources[1];
+    expect(context.gains[0]?.gain.value).toBe(0);
+    expect(neon?.stop).toHaveBeenCalledOnce();
+    expect(chill?.buffer).not.toBe(neon?.buffer);
+
+    audio.sync(
+      snapshot({ status: 'running', runId: 1, musicStyle: 'chillGrid' }),
+      trustedActivation(),
+    );
+    expect(context.sources).toHaveLength(2);
+    expect(chill?.stop).not.toHaveBeenCalled();
+    expect(context.gains[0]?.gain.value).toBeGreaterThan(0);
+  });
+
+  it('keeps the latest style authoritative across a delayed suspended resume and disposal', async () => {
+    let resolveResume!: () => void;
+    const resumeResult = new Promise<void>((resolve) => {
+      resolveResume = resolve;
+    });
+    const { audio, contexts } = audioHarness({
+      state: 'suspended',
+      resume: () => resumeResult,
+    });
+    audio.sync(snapshot({ status: 'running', runId: 1 }), trustedActivation());
+    const context = contexts[0];
+    if (context === undefined) throw new Error('Expected an AudioContext.');
+
+    audio.sync(
+      snapshot({ status: 'running', runId: 1, musicStyle: 'pixelDrift' }),
+    );
+    audio.sync(
+      snapshot({ status: 'paused', runId: 1, musicStyle: 'chillGrid' }),
+    );
+    const latestSource = context.sources.at(-1);
+    expect(context.sources).toHaveLength(3);
+    expect(context.gains[0]?.gain.value).toBe(0);
+
+    context.state = 'running';
+    resolveResume();
+    await flushMicrotasks();
+    expect(context.gains[0]?.gain.value).toBe(0);
+    expect(latestSource?.stop).not.toHaveBeenCalled();
+
+    audio.dispose();
+    expect(latestSource?.stop).toHaveBeenCalledOnce();
+    expect(
+      context.sources
+        .slice(0, -1)
+        .every((source) => source.stop.mock.calls.length === 1),
+    ).toBe(true);
   });
 
   it('deduplicates suspended resumes and cannot unmute after delayed pause/music-off', async () => {

@@ -58,6 +58,7 @@ class FakeMediaQueryList {
 
 class FakeElement {
   checked = false;
+  value = '';
   className = '';
   dataset: Record<string, string> = {};
   id = '';
@@ -125,6 +126,9 @@ class FakeElement {
       }
       if (selector === '#setting-music') {
         return this.ownerDocument.musicControl;
+      }
+      if (selector === '#setting-music-style') {
+        return this.ownerDocument.musicStyleControl;
       }
       if (selector === '#setting-sound-effects') {
         return this.ownerDocument.soundEffectsControl;
@@ -236,6 +240,7 @@ class FakeDocument {
   readonly touchControlsMount = new FakeElement('div', this);
   readonly closeButton = new FakeElement('button', this);
   readonly musicControl = new FakeElement('input', this);
+  readonly musicStyleControl = new FakeElement('select', this);
   readonly soundEffectsControl = new FakeElement('input', this);
   readonly reducedMotionControl = new FakeElement('input', this);
   readonly highContrastControl = new FakeElement('input', this);

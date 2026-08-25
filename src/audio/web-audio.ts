@@ -1,5 +1,6 @@
 import type { AudioCue, GameAudio, GameAudioSnapshot } from './game-audio';
 import { synthesizeGameAudio } from './synthesis';
+import { MUSIC_STYLES, type MusicStyle } from '../storage/preferences';
 
 interface AudioWindow {
   readonly AudioContext?: typeof AudioContext;
@@ -55,6 +56,7 @@ export function createWebGameAudio(view: AudioWindow | undefined): GameAudio {
     status: 'ready',
     runId: 0,
     musicEnabled: true,
+    musicStyle: 'neonPulse',
     soundEffectsEnabled: true,
   });
   let creationAttempted = false;
@@ -64,11 +66,108 @@ export function createWebGameAudio(view: AudioWindow | undefined): GameAudio {
   let musicGain: GainNode | undefined;
   let effectsGain: GainNode | undefined;
   let musicSource: AudioBufferSourceNode | undefined;
+  let appliedMusicStyle: MusicStyle | undefined;
   let currentEffect: AudioBufferSourceNode | undefined;
   let resumeInFlight: Promise<void> | undefined;
   let appliedRunId = latest.runId;
   let musicActivationPermitted = false;
-  const buffers = new Map<AudioCue | 'music', AudioBuffer>();
+  let reconcilingMusicEnd = false;
+  const buffers = new Map<AudioCue | MusicStyle, AudioBuffer>();
+  const cleanedMusicSources = new WeakSet<AudioBufferSourceNode>();
+
+  const cleanMusicSource = (
+    source: AudioBufferSourceNode,
+    stop: boolean,
+  ): void => {
+    if (cleanedMusicSources.has(source)) {
+      return;
+    }
+    cleanedMusicSources.add(source);
+    source.onended = null;
+    if (stop) {
+      safeStop(source);
+    }
+    safeDisconnect(source);
+  };
+
+  const replaceMusicSource = (
+    targetStyle: MusicStyle,
+    recoveryStyle: MusicStyle | undefined,
+  ): boolean => {
+    const replaceContext = context;
+    const replaceGain = musicGain;
+    const buffer = buffers.get(targetStyle);
+    if (
+      disposed ||
+      replaceContext === undefined ||
+      replaceGain === undefined ||
+      buffer === undefined ||
+      replaceContext.state === 'closed'
+    ) {
+      return false;
+    }
+
+    const previous = musicSource;
+    let candidate: AudioBufferSourceNode | undefined;
+    try {
+      const source = replaceContext.createBufferSource();
+      candidate = source;
+      source.buffer = buffer;
+      source.loop = true;
+      source.connect(replaceGain);
+    } catch {
+      if (candidate !== undefined) {
+        cleanMusicSource(candidate, true);
+      }
+      return false;
+    }
+
+    if (previous !== undefined) {
+      musicSource = undefined;
+      appliedMusicStyle = undefined;
+      cleanMusicSource(previous, true);
+    }
+
+    const source = candidate;
+    source.onended = () => {
+      if (disposed || musicSource !== source) {
+        return;
+      }
+      musicSource = undefined;
+      appliedMusicStyle = undefined;
+      cleanMusicSource(source, false);
+      if (
+        reconcilingMusicEnd ||
+        context !== replaceContext ||
+        musicGain !== replaceGain ||
+        replaceContext.state === 'closed'
+      ) {
+        return;
+      }
+      reconcilingMusicEnd = true;
+      try {
+        replaceMusicSource(latest.musicStyle, undefined);
+      } finally {
+        reconcilingMusicEnd = false;
+      }
+    };
+    musicSource = source;
+    appliedMusicStyle = targetStyle;
+    try {
+      source.start();
+      return musicSource === source;
+    } catch {
+      if (musicSource === source) {
+        musicSource = undefined;
+        appliedMusicStyle = undefined;
+      }
+      cleanMusicSource(source, true);
+      if (recoveryStyle !== undefined) {
+        replaceMusicSource(recoveryStyle, undefined);
+      }
+      return false;
+    }
+  };
 
   const stopCurrentEffect = (): void => {
     const source = currentEffect;
@@ -151,10 +250,10 @@ export function createWebGameAudio(view: AudioWindow | undefined): GameAudio {
       const createdContext = new AudioContextConstructor();
       context = createdContext;
       const waveforms = synthesizeGameAudio(createdContext.sampleRate);
-      for (const [name, samples] of Object.entries(waveforms) as [
-        keyof typeof waveforms,
-        Float32Array,
-      ][]) {
+      const storeBuffer = (
+        name: AudioCue | MusicStyle,
+        samples: Float32Array,
+      ): void => {
         const buffer = createdContext.createBuffer(
           1,
           samples.length,
@@ -162,6 +261,18 @@ export function createWebGameAudio(view: AudioWindow | undefined): GameAudio {
         );
         buffer.copyToChannel(new Float32Array(samples), 0);
         buffers.set(name, buffer);
+      };
+      for (const style of MUSIC_STYLES) {
+        storeBuffer(style, waveforms.musicStyles[style]);
+      }
+      for (const cue of [
+        'food',
+        'pause',
+        'resume',
+        'gameOver',
+        'completed',
+      ] as const) {
+        storeBuffer(cue, waveforms[cue]);
       }
 
       musicGain = createdContext.createGain();
@@ -171,11 +282,7 @@ export function createWebGameAudio(view: AudioWindow | undefined): GameAudio {
       musicGain.connect(createdContext.destination);
       effectsGain.connect(createdContext.destination);
 
-      musicSource = createdContext.createBufferSource();
-      musicSource.buffer = buffers.get('music') ?? null;
-      musicSource.loop = true;
-      musicSource.connect(musicGain);
-      musicSource.start();
+      replaceMusicSource(latest.musicStyle, undefined);
       appliedRunId = latest.runId;
       createdContext.onstatechange = () => {
         if (!disposed && context === createdContext) {
@@ -190,8 +297,9 @@ export function createWebGameAudio(view: AudioWindow | undefined): GameAudio {
       permanentlyUnavailable = true;
       setGain(musicGain, 0);
       setGain(effectsGain, 0);
-      safeStop(musicSource);
-      safeDisconnect(musicSource);
+      if (musicSource !== undefined) {
+        cleanMusicSource(musicSource, true);
+      }
       safeDisconnect(musicGain);
       safeDisconnect(effectsGain);
       if (context !== undefined) {
@@ -206,6 +314,7 @@ export function createWebGameAudio(view: AudioWindow | undefined): GameAudio {
       musicGain = undefined;
       effectsGain = undefined;
       musicSource = undefined;
+      appliedMusicStyle = undefined;
       buffers.clear();
     }
   };
@@ -229,6 +338,10 @@ export function createWebGameAudio(view: AudioWindow | undefined): GameAudio {
       if (eligibleActivation) {
         initialize();
         requestResume();
+      }
+
+      if (appliedMusicStyle !== latest.musicStyle && context !== undefined) {
+        replaceMusicSource(latest.musicStyle, appliedMusicStyle);
       }
 
       if (appliedRunId !== latest.runId || latest.status === 'ready') {
@@ -293,9 +406,7 @@ export function createWebGameAudio(view: AudioWindow | undefined): GameAudio {
       }
       stopCurrentEffect();
       if (musicSource !== undefined) {
-        musicSource.onended = null;
-        safeStop(musicSource);
-        safeDisconnect(musicSource);
+        cleanMusicSource(musicSource, true);
       }
       safeDisconnect(musicGain);
       safeDisconnect(effectsGain);
@@ -303,6 +414,7 @@ export function createWebGameAudio(view: AudioWindow | undefined): GameAudio {
       const closingContext = context;
       context = undefined;
       musicSource = undefined;
+      appliedMusicStyle = undefined;
       musicGain = undefined;
       effectsGain = undefined;
       if (closingContext !== undefined) {

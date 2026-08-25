@@ -1,9 +1,11 @@
 import type { GameStatus } from '../engine/model';
+import type { MusicStyle } from '../storage/preferences';
 
 export interface GameAudioSnapshot {
   readonly status: GameStatus;
   readonly runId: number;
   readonly musicEnabled: boolean;
+  readonly musicStyle: MusicStyle;
   readonly soundEffectsEnabled: boolean;
 }
 
