@@ -142,7 +142,7 @@ function createGameOverDialog(): HTMLDialogElement {
         Play again
       </button>
       <button class="button" type="button" data-action="return-to-title">
-        Return to title
+        Back to start
       </button>
     </div>
   `;

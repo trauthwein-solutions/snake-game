@@ -1546,7 +1546,7 @@ describe('mountApp gameplay lifecycle', () => {
     );
   });
 
-  it('restarts running games, supports Play Again, and returns to a focused ready title', () => {
+  it('restarts running games, supports Play Again, and returns to a focused ready start', () => {
     const { document, root } = mountHarness();
     document.playButton.click();
     harness.onStep?.();
@@ -1588,7 +1588,7 @@ describe('mountApp gameplay lifecycle', () => {
     expect(document.playButton.focus).toHaveBeenCalled();
     expect(harness.announce).toHaveBeenCalledWith(
       expect.anything(),
-      'Returned to title.',
+      'Returned to start.',
     );
   });
 

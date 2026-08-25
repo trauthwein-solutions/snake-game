@@ -112,7 +112,7 @@ test('plays a complete desktop lifecycle on the fixed-step clock', async ({
 
   await page.clock.runFor(1_620);
   await expect(app).toHaveAttribute('data-game-status', 'gameOver');
-  await page.getByRole('button', { name: 'Return to title' }).click();
+  await page.getByRole('button', { name: 'Back to start' }).click();
   await expect(app).toHaveAttribute('data-game-status', 'ready');
   await expect(app).toHaveAttribute('data-game-score', '0');
   await expect(app).toHaveAttribute('data-game-head', '10,10');
