@@ -3,6 +3,13 @@ export type GameStatus =
 
 export type Direction = 'up' | 'right' | 'down' | 'left';
 
+export const WALL_MODES = ['solid', 'wrapAround'] as const;
+export type WallMode = (typeof WALL_MODES)[number];
+
+export const isWallMode = (value: unknown): value is WallMode =>
+  typeof value === 'string' &&
+  (WALL_MODES as readonly string[]).includes(value);
+
 export interface GridPosition {
   readonly x: number;
   readonly y: number;

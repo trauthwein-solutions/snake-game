@@ -1,3 +1,4 @@
+import { isWallMode, type WallMode } from '../engine/model';
 import { parseStrictJsonObject } from './strict-json-object';
 
 export const PREFERENCES_STORAGE_KEY = 'snakish.preferences.v1';
@@ -11,12 +12,13 @@ export const MUSIC_STYLES = [
 export type MusicStyle = (typeof MUSIC_STYLES)[number];
 
 export interface Preferences {
-  readonly version: 2;
+  readonly version: 3;
   readonly music: boolean;
   readonly musicStyle: MusicStyle;
   readonly soundEffects: boolean;
   readonly reducedMotion: boolean;
   readonly highContrast: boolean;
+  readonly wallMode: WallMode;
 }
 
 export interface PreferencesStorage {
@@ -25,15 +27,26 @@ export interface PreferencesStorage {
 }
 
 export const DEFAULT_PREFERENCES: Preferences = Object.freeze({
-  version: 2,
+  version: 3,
   music: true,
   musicStyle: 'neonPulse',
   soundEffects: true,
   reducedMotion: false,
   highContrast: false,
+  wallMode: 'solid',
 });
 
-const PREFERENCE_MEMBER_NAMES = [
+const V3_PREFERENCE_MEMBER_NAMES = [
+  'version',
+  'music',
+  'musicStyle',
+  'soundEffects',
+  'reducedMotion',
+  'highContrast',
+  'wallMode',
+] as const;
+
+const V2_PREFERENCE_MEMBER_NAMES = [
   'version',
   'music',
   'musicStyle',
@@ -50,7 +63,13 @@ const V1_PREFERENCE_MEMBER_NAMES = [
   'highContrast',
 ] as const;
 
-const hasBooleanPreferences = (payload: Record<string, unknown>): boolean =>
+const hasBooleanPreferences = (
+  payload: Record<string, unknown>,
+): payload is Record<string, unknown> &
+  Pick<
+    Preferences,
+    'music' | 'soundEffects' | 'reducedMotion' | 'highContrast'
+  > =>
   typeof payload.music === 'boolean' &&
   typeof payload.soundEffects === 'boolean' &&
   typeof payload.reducedMotion === 'boolean' &&
@@ -60,24 +79,73 @@ export const isMusicStyle = (value: unknown): value is MusicStyle =>
   typeof value === 'string' &&
   (MUSIC_STYLES as readonly string[]).includes(value);
 
+const hasExactMembers = (
+  value: Record<string, unknown>,
+  memberNames: readonly string[],
+): boolean => {
+  const keys = Object.keys(value);
+  return (
+    keys.length === memberNames.length &&
+    memberNames.every((name) => Object.hasOwn(value, name))
+  );
+};
+
 const isPreferences = (value: unknown): value is Preferences => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const keys = Object.keys(value);
-  if (
-    keys.length !== PREFERENCE_MEMBER_NAMES.length ||
-    PREFERENCE_MEMBER_NAMES.some((name) => !Object.hasOwn(value, name))
-  ) {
     return false;
   }
 
   const payload = value as Record<string, unknown>;
   return (
-    payload.version === 2 &&
+    hasExactMembers(payload, V3_PREFERENCE_MEMBER_NAMES) &&
+    payload.version === 3 &&
     isMusicStyle(payload.musicStyle) &&
+    isWallMode(payload.wallMode) &&
     hasBooleanPreferences(payload)
   );
+};
+
+const freezePreferences = (
+  payload: Omit<Preferences, 'version'>,
+): Preferences =>
+  Object.freeze({
+    version: 3,
+    music: payload.music,
+    musicStyle: payload.musicStyle,
+    soundEffects: payload.soundEffects,
+    reducedMotion: payload.reducedMotion,
+    highContrast: payload.highContrast,
+    wallMode: payload.wallMode,
+  });
+
+const loadV3Preferences = (serialized: string): Preferences | undefined => {
+  const payload = parseStrictJsonObject(serialized, V3_PREFERENCE_MEMBER_NAMES);
+  if (payload === null || !isPreferences(payload)) {
+    return undefined;
+  }
+
+  return freezePreferences(payload);
+};
+
+const migrateV2Preferences = (serialized: string): Preferences | undefined => {
+  const payload = parseStrictJsonObject(serialized, V2_PREFERENCE_MEMBER_NAMES);
+  if (
+    payload === null ||
+    payload.version !== 2 ||
+    !isMusicStyle(payload.musicStyle) ||
+    !hasBooleanPreferences(payload)
+  ) {
+    return undefined;
+  }
+
+  return freezePreferences({
+    music: payload.music,
+    musicStyle: payload.musicStyle,
+    soundEffects: payload.soundEffects,
+    reducedMotion: payload.reducedMotion,
+    highContrast: payload.highContrast,
+    wallMode: 'solid',
+  });
 };
 
 const migrateV1Preferences = (serialized: string): Preferences | undefined => {
@@ -90,13 +158,13 @@ const migrateV1Preferences = (serialized: string): Preferences | undefined => {
     return undefined;
   }
 
-  return Object.freeze({
-    version: 2,
-    music: payload.music as boolean,
+  return freezePreferences({
+    music: payload.music,
     musicStyle: 'neonPulse',
-    soundEffects: payload.soundEffects as boolean,
-    reducedMotion: payload.reducedMotion as boolean,
-    highContrast: payload.highContrast as boolean,
+    soundEffects: payload.soundEffects,
+    reducedMotion: payload.reducedMotion,
+    highContrast: payload.highContrast,
+    wallMode: 'solid',
   });
 };
 
@@ -109,19 +177,12 @@ export function loadPreferences(
       return DEFAULT_PREFERENCES;
     }
 
-    const payload = parseStrictJsonObject(storedValue, PREFERENCE_MEMBER_NAMES);
-    if (payload === null || !isPreferences(payload)) {
-      return migrateV1Preferences(storedValue) ?? DEFAULT_PREFERENCES;
-    }
-
-    return Object.freeze({
-      version: 2,
-      music: payload.music,
-      musicStyle: payload.musicStyle,
-      soundEffects: payload.soundEffects,
-      reducedMotion: payload.reducedMotion,
-      highContrast: payload.highContrast,
-    });
+    return (
+      loadV3Preferences(storedValue) ??
+      migrateV2Preferences(storedValue) ??
+      migrateV1Preferences(storedValue) ??
+      DEFAULT_PREFERENCES
+    );
   } catch {
     return DEFAULT_PREFERENCES;
   }
@@ -135,15 +196,17 @@ export function savePreferences(
     if (!isPreferences(preferences)) {
       return;
     }
+
     storage?.setItem(
       PREFERENCES_STORAGE_KEY,
       JSON.stringify({
-        version: 2,
+        version: 3,
         music: preferences.music,
         musicStyle: preferences.musicStyle,
         soundEffects: preferences.soundEffects,
         reducedMotion: preferences.reducedMotion,
         highContrast: preferences.highContrast,
+        wallMode: preferences.wallMode,
       }),
     );
   } catch {

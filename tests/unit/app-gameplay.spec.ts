@@ -73,6 +73,8 @@ class FakeElement {
       if (selector === '#setting-music') return this.ownerDocument.musicControl;
       if (selector === '#setting-music-style')
         return this.ownerDocument.musicStyleControl;
+      if (selector === '#setting-walls')
+        return this.ownerDocument.wallModeControl;
       if (selector === '#setting-sound-effects')
         return this.ownerDocument.soundEffectsControl;
       if (selector === '#setting-reduced-motion')
@@ -200,9 +202,11 @@ class FakeDocument {
   readonly restartButton = new FakeElement('button', this);
   readonly canvas = new FakeElement('canvas', this);
   readonly touchControlsMount = new FakeElement('div', this);
+  readonly instructions = new FakeElement('p', this);
   readonly closeButton = new FakeElement('button', this);
   readonly musicControl = new FakeElement('input', this);
   readonly musicStyleControl = new FakeElement('select', this);
+  readonly wallModeControl = new FakeElement('select', this);
   readonly soundEffectsControl = new FakeElement('input', this);
   readonly reducedMotionControl = new FakeElement('input', this);
   readonly highContrastControl = new FakeElement('input', this);
@@ -223,6 +227,7 @@ class FakeDocument {
     ['[data-action="restart"]', this.restartButton],
     ['[data-render-target="arena"]', this.canvas],
     ['[data-touch-controls]', this.touchControlsMount],
+    ['#arena-instructions', this.instructions],
   ]);
 
   createElement(tagName: string): FakeElement {
@@ -340,6 +345,7 @@ const dialogElements = vi.hoisted(() => ({
     | {
         music: FakeElement;
         musicStyle: FakeElement;
+        wallMode: FakeElement;
         soundEffects: FakeElement;
         reducedMotion: FakeElement;
         highContrast: FakeElement;
@@ -354,6 +360,7 @@ vi.mock('../../src/ui/dialogs', () => ({
       initialSettings: {
         music: boolean;
         musicStyle: string;
+        wallMode: string;
         soundEffects: boolean;
         reducedMotion: boolean;
         highContrast: boolean;
@@ -367,6 +374,7 @@ vi.mock('../../src/ui/dialogs', () => ({
       dialogElements.settingsControls = {
         music: new FakeElement('input', document),
         musicStyle: new FakeElement('select', document),
+        wallMode: new FakeElement('select', document),
         soundEffects: new FakeElement('input', document),
         reducedMotion: new FakeElement('input', document),
         highContrast: new FakeElement('input', document),
@@ -376,6 +384,7 @@ vi.mock('../../src/ui/dialogs', () => ({
       }
       dialogElements.settingsControls.musicStyle.value =
         initialSettings.musicStyle;
+      dialogElements.settingsControls.wallMode.value = initialSettings.wallMode;
       for (const key of [
         'soundEffects',
         'reducedMotion',
@@ -537,6 +546,7 @@ describe('mountApp gameplay lifecycle', () => {
     expect(dialogElements.settingsControls).toMatchObject({
       music: { checked: false },
       musicStyle: { value: 'neonPulse' },
+      wallMode: { value: 'solid' },
       soundEffects: { checked: false },
       reducedMotion: { checked: true },
       highContrast: { checked: true },
@@ -579,16 +589,91 @@ describe('mountApp gameplay lifecycle', () => {
     expect(document.defaultView.localStorage.setItem.mock.calls).toEqual([
       [
         'snakish.preferences.v1',
-        '{"version":2,"music":false,"musicStyle":"neonPulse","soundEffects":true,"reducedMotion":false,"highContrast":false}',
+        '{"version":3,"music":false,"musicStyle":"neonPulse","soundEffects":true,"reducedMotion":false,"highContrast":false,"wallMode":"solid"}',
       ],
       [
         'snakish.preferences.v1',
-        '{"version":2,"music":false,"musicStyle":"neonPulse","soundEffects":false,"reducedMotion":false,"highContrast":false}',
+        '{"version":3,"music":false,"musicStyle":"neonPulse","soundEffects":false,"reducedMotion":false,"highContrast":false,"wallMode":"solid"}',
       ],
     ]);
     expect(harness.presentationRedraw).not.toHaveBeenCalled();
     expect(harness.presentationSync).not.toHaveBeenCalled();
     expect(harness.schedulerOperations).toEqual([]);
+  });
+
+  it('loads Walls from storage and saves one canonical v3 payload per actual selection', () => {
+    const { document } = mountHarness((fakeDocument) => {
+      fakeDocument.defaultView.localStorage.values.set(
+        'snakish.preferences.v1',
+        '{"version":3,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"wrapAround"}',
+      );
+    });
+    const control = dialogElements.settingsControls?.wallMode;
+    if (control === undefined) throw new Error('Expected Walls control.');
+    expect(control.value).toBe('wrapAround');
+    document.defaultView.localStorage.setItem.mockClear();
+
+    control.dispatchEvent(new Event('change'));
+    expect(document.defaultView.localStorage.setItem).not.toHaveBeenCalled();
+
+    control.value = 'solid';
+    control.dispatchEvent(new Event('change'));
+
+    expect(document.defaultView.localStorage.setItem).toHaveBeenCalledOnce();
+    expect(document.defaultView.localStorage.setItem).toHaveBeenCalledWith(
+      'snakish.preferences.v1',
+      '{"version":3,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"solid"}',
+    );
+  });
+
+  it('uses the latest rapid Walls selection on the next active tick without reset', () => {
+    const { audio, factory } = fakeAudio();
+    const { document, root } = mountHarness(undefined, factory);
+    const control = dialogElements.settingsControls?.wallMode;
+    if (control === undefined) throw new Error('Expected Walls control.');
+    document.playButton.click();
+    harness.onStep?.();
+    const beforeChange = { ...root.dataset };
+    const feedbackBeforeChange = renderFeedback(10);
+    const schedulerBefore = [...harness.schedulerOperations];
+    vi.mocked(audio.sync).mockClear();
+
+    control.value = 'wrapAround';
+    control.dispatchEvent(new Event('change'));
+    control.value = 'solid';
+    control.dispatchEvent(new Event('change'));
+    control.value = 'wrapAround';
+    control.dispatchEvent(new Event('change'));
+
+    expect(root.dataset).toEqual(beforeChange);
+    expect(harness.schedulerOperations).toEqual(schedulerBefore);
+    expect(harness.schedulerReset).not.toHaveBeenCalled();
+    expect(audio.sync).not.toHaveBeenCalled();
+    expect(harness.announce).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('restart'),
+    );
+    expect(document.instructions.textContent).toContain('Edges wrap');
+    expect(renderFeedback(20)).toBe(feedbackBeforeChange);
+
+    harness.onStep?.();
+
+    expect(harness.simulation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        status: 'running',
+        score: 0,
+        speedTier: 0,
+        snake: [
+          { x: 11, y: 10 },
+          { x: 10, y: 10 },
+          { x: 9, y: 10 },
+        ],
+        lastAcceptedDirection: 'right',
+        pendingDirection: null,
+      }),
+      Math.random,
+      'wrapAround',
+    );
   });
 
   it('keeps checkbox state in memory when preference saving throws', () => {
@@ -600,16 +685,26 @@ describe('mountApp gameplay lifecycle', () => {
     const controls = dialogElements.settingsControls;
     if (controls === undefined) throw new Error('Expected Settings controls.');
 
-    for (const control of Object.values(controls)) {
+    for (const control of [
+      controls.music,
+      controls.soundEffects,
+      controls.reducedMotion,
+      controls.highContrast,
+    ]) {
       control.checked = !control.checked;
       expect(() => control.dispatchEvent(new Event('change'))).not.toThrow();
     }
+    controls.wallMode.value = 'wrapAround';
+    expect(() =>
+      controls.wallMode.dispatchEvent(new Event('change')),
+    ).not.toThrow();
 
     expect(controls).toMatchObject({
       music: { checked: false },
       soundEffects: { checked: false },
       reducedMotion: { checked: true },
       highContrast: { checked: true },
+      wallMode: { value: 'wrapAround' },
     });
   });
 
@@ -812,7 +907,7 @@ describe('mountApp gameplay lifecycle', () => {
 
     expect(document.defaultView.localStorage.setItem).toHaveBeenCalledWith(
       'snakish.preferences.v1',
-      '{"version":2,"music":true,"musicStyle":"chillGrid","soundEffects":false,"reducedMotion":true,"highContrast":false}',
+      '{"version":3,"music":true,"musicStyle":"chillGrid","soundEffects":false,"reducedMotion":true,"highContrast":false,"wallMode":"solid"}',
     );
     expect(vi.mocked(audio.sync).mock.calls).toEqual([
       [
@@ -927,12 +1022,15 @@ describe('mountApp gameplay lifecycle', () => {
     expect(audio.play).not.toHaveBeenCalled();
 
     const musicStyle = dialogElements.settingsControls?.musicStyle;
+    const wallMode = dialogElements.settingsControls?.wallMode;
     expect(musicStyle?.listeners.get('change')?.size).toBe(1);
+    expect(wallMode?.listeners.get('change')?.size).toBe(1);
 
     teardown();
     teardown();
     expect(audio.dispose).toHaveBeenCalledOnce();
     expect(musicStyle?.listeners.get('change')?.size).toBe(0);
+    expect(wallMode?.listeners.get('change')?.size).toBe(0);
   });
 
   it('does not write for scores below or tied with the persisted best', () => {
@@ -1237,6 +1335,7 @@ describe('mountApp gameplay lifecycle', () => {
         pendingDirection: 'up',
       }),
       Math.random,
+      'solid',
     );
   });
 
@@ -1345,6 +1444,7 @@ describe('mountApp gameplay lifecycle', () => {
     expect(harness.simulation).toHaveBeenCalledWith(
       expect.objectContaining({ pendingDirection: 'up' }),
       Math.random,
+      'solid',
     );
     expect(root.dataset.gameHead).toBe('11,10');
     expect(harness.render.mock.calls.at(-1)?.[1]?.snake[0]).toEqual({
@@ -1719,12 +1819,13 @@ describe('gameplay UI helpers', () => {
     const dialogs = createDialogs(
       document.settingsButton as unknown as HTMLButtonElement,
       {
-        version: 2,
+        version: 3,
         music: true,
         musicStyle: 'neonPulse',
         soundEffects: true,
         reducedMotion: false,
         highContrast: false,
+        wallMode: 'solid',
       },
     );
     const settings = dialogs.settingsDialog as unknown as FakeElement;
@@ -1733,8 +1834,10 @@ describe('gameplay UI helpers', () => {
       'settings-description',
     );
     expect(settings.innerHTML).toContain(
-      'Choose audio and visual preferences.',
+      'Choose audio, gameplay, and visual preferences.',
     );
+    expect(settings.innerHTML).toContain('<span>Walls</span>');
+    expect(settings.innerHTML).toContain('>Wrap-around</option>');
     expect(result.attributes.get('aria-describedby')).toBe('result-summary');
     expect(result.innerHTML).toContain('id="result-summary"');
 
@@ -1758,12 +1861,13 @@ describe('gameplay UI helpers', () => {
     const dialogs = createDialogs(
       document.settingsButton as unknown as HTMLButtonElement,
       {
-        version: 2,
+        version: 3,
         music: false,
         musicStyle: 'pixelDrift',
         soundEffects: true,
         reducedMotion: true,
         highContrast: false,
+        wallMode: 'wrapAround',
       },
     );
 
@@ -1772,6 +1876,7 @@ describe('gameplay UI helpers', () => {
     expect(dialogs.settingsControls.soundEffects.checked).toBe(true);
     expect(dialogs.settingsControls.reducedMotion.checked).toBe(true);
     expect(dialogs.settingsControls.highContrast.checked).toBe(false);
+    expect(dialogs.settingsControls.wallMode.value).toBe('wrapAround');
 
     dialogs.showResult(status, 40, true);
 
@@ -1804,12 +1909,13 @@ describe('gameplay UI helpers', () => {
     const dialogs = createDialogs(
       document.settingsButton as unknown as HTMLButtonElement,
       {
-        version: 2,
+        version: 3,
         music: true,
         musicStyle: 'neonPulse',
         soundEffects: true,
         reducedMotion: false,
         highContrast: false,
+        wallMode: 'solid',
       },
     );
     const settingsDialog = dialogs.settingsDialog as unknown as FakeElement;

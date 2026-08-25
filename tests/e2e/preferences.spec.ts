@@ -13,12 +13,13 @@ const CLOCK_INSTALL_TIME = new Date('2026-01-01T00:00:00.000Z');
 const CLOCK_PAUSE_TIME = new Date('2026-01-01T00:01:00.000Z');
 const PREFERENCES_KEY = 'snakish.preferences.v1';
 const DEFAULT_PAYLOAD = {
-  version: 2,
+  version: 3,
   music: true,
   musicStyle: 'neonPulse',
   soundEffects: true,
   reducedMotion: false,
   highContrast: false,
+  wallMode: 'solid',
 } as const;
 const HIGH_CONTRAST_PRIMARY = {
   background: 'rgb(0, 255, 255)',
@@ -57,6 +58,7 @@ function settingsControls(page: Page) {
   return {
     music: page.getByRole('checkbox', { name: 'Music', exact: true }),
     musicStyle: page.getByRole('combobox', { name: 'Music style' }),
+    wallMode: page.getByRole('combobox', { name: 'Walls' }),
     soundEffects: page.getByRole('checkbox', {
       name: 'Sound effects',
       exact: true,
@@ -119,6 +121,7 @@ test('defaults, immediate high contrast, and reload persistence preserve game st
 
   await expect(controls.music).toBeChecked();
   await expect(controls.musicStyle).toHaveValue('neonPulse');
+  await expect(controls.wallMode).toHaveValue('solid');
   await expect(controls.soundEffects).toBeChecked();
   await expect(controls.reducedMotion).not.toBeChecked();
   await expect(controls.highContrast).not.toBeChecked();
@@ -285,6 +288,7 @@ test('music and sound-effects preferences persist independently without game-sta
   const reloaded = settingsControls(page);
   await expect(reloaded.music).not.toBeChecked();
   await expect(reloaded.musicStyle).toHaveValue('neonPulse');
+  await expect(reloaded.wallMode).toHaveValue('solid');
   await expect(reloaded.soundEffects).not.toBeChecked();
   await expect(reloaded.reducedMotion).not.toBeChecked();
   await expect(reloaded.highContrast).not.toBeChecked();
@@ -305,7 +309,7 @@ test('music style selection persists across mixed Music off, reload, style choic
   await expect(
     page.evaluate((key) => localStorage.getItem(key), PREFERENCES_KEY),
   ).resolves.toBe(
-    '{"version":2,"music":false,"musicStyle":"minimalBeat","soundEffects":true,"reducedMotion":false,"highContrast":false}',
+    '{"version":3,"music":false,"musicStyle":"minimalBeat","soundEffects":true,"reducedMotion":false,"highContrast":false,"wallMode":"solid"}',
   );
 
   await page.reload();
@@ -317,8 +321,72 @@ test('music style selection persists across mixed Music off, reload, style choic
   await expect(
     page.evaluate((key) => localStorage.getItem(key), PREFERENCES_KEY),
   ).resolves.toBe(
-    '{"version":2,"music":true,"musicStyle":"minimalBeat","soundEffects":true,"reducedMotion":false,"highContrast":false}',
+    '{"version":3,"music":true,"musicStyle":"minimalBeat","soundEffects":true,"reducedMotion":false,"highContrast":false,"wallMode":"solid"}',
   );
+  expect(browserErrors).toEqual([]);
+});
+
+test('Walls is accessible, persists across reload, and keeps Music first-focused', async ({
+  page,
+}) => {
+  const browserErrors = collectPageErrors(page);
+  await loadWithControlledClock(page);
+  const settingsButton = page.getByRole('button', { name: 'Settings' });
+  await settingsButton.click();
+  const controls = settingsControls(page);
+
+  await expect(controls.music).toBeFocused();
+  await expect(controls.wallMode).toHaveValue('solid');
+  await expect(controls.wallMode.locator('option')).toHaveText([
+    'Solid',
+    'Wrap-around',
+  ]);
+  await controls.wallMode.selectOption('wrapAround');
+  await expect(page.locator('#arena-instructions')).toContainText(
+    'Edges wrap while body collisions end the run.',
+  );
+  await expect(
+    page.evaluate((key) => localStorage.getItem(key), PREFERENCES_KEY),
+  ).resolves.toBe(
+    '{"version":3,"music":true,"musicStyle":"neonPulse","soundEffects":true,"reducedMotion":false,"highContrast":false,"wallMode":"wrapAround"}',
+  );
+
+  await page.reload();
+  await settingsButton.click();
+  await expect(settingsControls(page).wallMode).toHaveValue('wrapAround');
+  await expect(settingsControls(page).music).toBeFocused();
+  expect(browserErrors).toEqual([]);
+});
+
+test('live Walls switching affects the next edge tick without resetting the run', async ({
+  page,
+}) => {
+  const browserErrors = collectPageErrors(page);
+  await loadWithControlledClock(page);
+  const app = page.locator('#app');
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await page.clock.runFor(1700);
+  await expect(app).toHaveAttribute('data-game-head', '19,10');
+  await expect(app).toHaveAttribute('data-game-score', '10');
+
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const walls = settingsControls(page).wallMode;
+  await walls.selectOption('wrapAround');
+  await expect(app).toHaveAttribute('data-game-status', 'running');
+  await expect(app).toHaveAttribute('data-game-head', '19,10');
+  await expect(app).toHaveAttribute('data-game-score', '10');
+  await page.clock.runFor(100);
+  await expect(app).toHaveAttribute('data-game-head', '0,10');
+  await expect(app).toHaveAttribute('data-game-status', 'running');
+
+  await walls.selectOption('solid');
+  await expect(page.locator('#arena-instructions')).toContainText(
+    'Wall or body collisions end the run.',
+  );
+  await page.getByRole('button', { name: 'Close settings' }).click();
+  await page.clock.runFor(3600);
+  await expect(app).toHaveAttribute('data-game-status', 'gameOver');
+  await expect(app).toHaveAttribute('data-game-score', '10');
   expect(browserErrors).toEqual([]);
 });
 
@@ -349,7 +417,7 @@ for (const [label, invalidPayload] of [
     await expect(
       page.evaluate((key) => localStorage.getItem(key), PREFERENCES_KEY),
     ).resolves.toBe(
-      '{"version":2,"music":false,"musicStyle":"neonPulse","soundEffects":true,"reducedMotion":false,"highContrast":false}',
+      '{"version":3,"music":false,"musicStyle":"neonPulse","soundEffects":true,"reducedMotion":false,"highContrast":false,"wallMode":"solid"}',
     );
     expect(browserErrors).toEqual([]);
   });
@@ -385,12 +453,14 @@ for (const failureMode of ['getter', 'getItem', 'setItem'] as const) {
     await controls.soundEffects.uncheck();
     await controls.reducedMotion.check();
     await controls.highContrast.check();
+    await controls.wallMode.selectOption('wrapAround');
     await page.getByRole('button', { name: 'Close settings' }).click();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(controls.music).not.toBeChecked();
     await expect(controls.soundEffects).not.toBeChecked();
     await expect(controls.reducedMotion).toBeChecked();
     await expect(controls.highContrast).toBeChecked();
+    await expect(controls.wallMode).toHaveValue('wrapAround');
     await page.getByRole('button', { name: 'Close settings' }).click();
 
     await page.getByRole('button', { name: 'Play', exact: true }).click();
@@ -421,20 +491,23 @@ test('320px persisted mixed high-contrast Settings stay unclipped with 44px cont
   await expect(controls.soundEffects).toBeChecked();
   await expect(controls.reducedMotion).toBeChecked();
   await expect(controls.highContrast).toBeChecked();
+  await controls.wallMode.selectOption('wrapAround');
+  await expect(controls.wallMode).toHaveValue('wrapAround');
 
   const layout = await page.evaluate(() => {
     const dialog = document.querySelector<HTMLElement>('#settings-dialog');
     const settings = [...document.querySelectorAll<HTMLElement>('.setting')];
     const musicStyle = document.querySelector<HTMLSelectElement>(
-      '#settings-dialog select',
+      '#setting-music-style',
     );
+    const walls = document.querySelector<HTMLSelectElement>('#setting-walls');
     const controls = [
       ...document.querySelectorAll<HTMLElement>(
         '#settings-dialog button, #settings-dialog input, #settings-dialog select',
       ),
     ];
-    if (dialog === null || musicStyle === null) {
-      throw new Error('Expected Settings dialog and music style select.');
+    if (dialog === null || musicStyle === null || walls === null) {
+      throw new Error('Expected Settings dialog and select controls.');
     }
     const dialogBounds = dialog.getBoundingClientRect();
     const musicStyleBounds = musicStyle.getBoundingClientRect();
@@ -442,11 +515,24 @@ test('320px persisted mixed high-contrast Settings stay unclipped with 44px cont
       .closest<HTMLElement>('.setting')!
       .getBoundingClientRect();
     const musicStyleComputed = getComputedStyle(musicStyle);
+    const wallsBounds = walls.getBoundingClientRect();
+    const wallsSettingBounds = walls
+      .closest<HTMLElement>('.setting')!
+      .getBoundingClientRect();
+    const wallsComputed = getComputedStyle(walls);
+    const textCanvas = document.createElement('canvas');
+    const textContext = textCanvas.getContext('2d');
+    if (textContext === null) throw new Error('Expected text metrics context.');
+    textContext.font = wallsComputed.font;
     return {
       clientWidth: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,
       dialogLeft: dialogBounds.left,
       dialogRight: dialogBounds.right,
+      dialogTop: dialogBounds.top,
+      dialogBottom: dialogBounds.bottom,
+      dialogClientHeight: dialog.clientHeight,
+      dialogScrollHeight: dialog.scrollHeight,
       musicStyle: {
         contentWidth:
           musicStyleBounds.width -
@@ -460,19 +546,51 @@ test('320px persisted mixed high-contrast Settings stay unclipped with 44px cont
         settingLeft: musicStyleSettingBounds.left,
         settingRight: musicStyleSettingBounds.right,
       },
+      walls: {
+        contentWidth:
+          wallsBounds.width -
+          parseFloat(wallsComputed.paddingLeft) -
+          parseFloat(wallsComputed.paddingRight) -
+          parseFloat(wallsComputed.borderLeftWidth) -
+          parseFloat(wallsComputed.borderRightWidth),
+        selectedTextWidth: textContext.measureText('Wrap-around').width,
+        nativeArrowReserve: parseFloat(wallsComputed.fontSize) * 1,
+        height: wallsBounds.height,
+        left: wallsBounds.left,
+        right: wallsBounds.right,
+        settingLeft: wallsSettingBounds.left,
+        settingRight: wallsSettingBounds.right,
+      },
       controls: controls.map((control) => {
         const bounds = control.getBoundingClientRect();
-        return { width: bounds.width, height: bounds.height };
+        return {
+          width: bounds.width,
+          height: bounds.height,
+          left: bounds.left,
+          right: bounds.right,
+          top: bounds.top,
+          bottom: bounds.bottom,
+        };
       }),
       rows: settings.map((setting) => {
         const bounds = setting.getBoundingClientRect();
-        return { left: bounds.left, right: bounds.right };
+        return {
+          left: bounds.left,
+          right: bounds.right,
+          top: bounds.top,
+          bottom: bounds.bottom,
+        };
       }),
     };
   });
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
   expect(layout.dialogLeft).toBeGreaterThanOrEqual(0);
   expect(layout.dialogRight).toBeLessThanOrEqual(layout.clientWidth);
+  expect(layout.dialogTop).toBeGreaterThanOrEqual(0);
+  expect(layout.dialogBottom).toBeLessThanOrEqual(720);
+  expect(layout.dialogScrollHeight).toBeLessThanOrEqual(
+    layout.dialogClientHeight,
+  );
   expect(layout.musicStyle.contentWidth).toBeGreaterThanOrEqual(120);
   expect(layout.musicStyle.height).toBeGreaterThanOrEqual(44);
   expect(layout.musicStyle.left).toBeGreaterThanOrEqual(
@@ -483,14 +601,32 @@ test('320px persisted mixed high-contrast Settings stay unclipped with 44px cont
   );
   expect(layout.musicStyle.left).toBeGreaterThanOrEqual(layout.dialogLeft);
   expect(layout.musicStyle.right).toBeLessThanOrEqual(layout.dialogRight);
+  expect(layout.walls.contentWidth).toBeGreaterThanOrEqual(
+    Math.ceil(layout.walls.selectedTextWidth + layout.walls.nativeArrowReserve),
+  );
+  expect(layout.walls.height).toBeGreaterThanOrEqual(44);
+  expect(layout.walls.left).toBeGreaterThanOrEqual(layout.walls.settingLeft);
+  expect(layout.walls.right).toBeLessThanOrEqual(layout.walls.settingRight);
+  expect(layout.walls.left).toBeGreaterThanOrEqual(layout.dialogLeft);
+  expect(layout.walls.right).toBeLessThanOrEqual(layout.dialogRight);
   for (const control of layout.controls) {
     expect(control.width).toBeGreaterThanOrEqual(44);
     expect(control.height).toBeGreaterThanOrEqual(44);
+    expect(control.left).toBeGreaterThanOrEqual(layout.dialogLeft);
+    expect(control.right).toBeLessThanOrEqual(layout.dialogRight);
+    expect(control.top).toBeGreaterThanOrEqual(layout.dialogTop);
+    expect(control.bottom).toBeLessThanOrEqual(layout.dialogBottom);
   }
-  for (const row of layout.rows) {
+  layout.rows.forEach((row, index) => {
     expect(row.left).toBeGreaterThanOrEqual(layout.dialogLeft);
     expect(row.right).toBeLessThanOrEqual(layout.dialogRight);
-  }
+    expect(row.top).toBeGreaterThanOrEqual(layout.dialogTop);
+    expect(row.bottom).toBeLessThanOrEqual(layout.dialogBottom);
+    const nextRow = layout.rows[index + 1];
+    if (nextRow !== undefined) {
+      expect(row.bottom).toBeLessThanOrEqual(nextRow.top);
+    }
+  });
   await page.screenshot({
     path: 'test-results/preferences-mixed-mobile-320.png',
     fullPage: true,

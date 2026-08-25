@@ -87,6 +87,7 @@ test('settings dialog has labeled controls and restores focus when closed', asyn
     page.getByRole('checkbox', { name: 'High contrast', exact: true }),
   ];
   const musicStyle = page.getByRole('combobox', { name: 'Music style' });
+  const walls = page.getByRole('combobox', { name: 'Walls' });
 
   for (const control of controls) {
     await expect(control).toHaveCount(1);
@@ -100,6 +101,9 @@ test('settings dialog has labeled controls and restores focus when closed', asyn
     'Minimal Beat',
     'Chill Grid',
   ]);
+  await expect(walls).toHaveValue('solid');
+  await expect(walls.locator('option')).toHaveText(['Solid', 'Wrap-around']);
+  await expect(controls[0]).toBeFocused();
 
   await page.getByRole('button', { name: 'Close settings' }).click();
   await expect(settingsDialog).toBeHidden();

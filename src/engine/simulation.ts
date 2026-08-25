@@ -1,6 +1,6 @@
 import { GRID_HEIGHT, GRID_WIDTH, SPEED_TIER_INTERVAL_MS } from './constants';
 import { applyCommand } from './game-engine';
-import type { GameState } from './model';
+import type { GameState, WallMode } from './model';
 import { selectFreeCell, type RandomSource } from './random';
 
 export const tickIntervalForSpeedTier = (speedTier: number): number => {
@@ -18,8 +18,9 @@ export const tickIntervalForSpeedTier = (speedTier: number): number => {
 export const advanceSimulation = (
   state: GameState,
   randomSource: RandomSource,
+  wallMode: WallMode = 'solid',
 ): GameState => {
-  const probe = applyCommand(state, { type: 'tick', nextFood: null });
+  const probe = applyCommand(state, { type: 'tick', nextFood: null }, wallMode);
 
   if (probe.score <= state.score) {
     return probe;
@@ -32,5 +33,5 @@ export const advanceSimulation = (
     randomSource,
   );
 
-  return applyCommand(state, { type: 'tick', nextFood });
+  return applyCommand(state, { type: 'tick', nextFood }, wallMode);
 };

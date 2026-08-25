@@ -1,7 +1,7 @@
 import type { GameAudioFactory, GameAudioSnapshot } from './audio/game-audio';
 import { createWebGameAudio } from './audio/web-audio';
 import { applyCommand, createInitialState } from './engine/game-engine';
-import type { Direction, GameState } from './engine/model';
+import { isWallMode, type Direction, type GameState } from './engine/model';
 import {
   advanceSimulation,
   tickIntervalForSpeedTier,
@@ -118,6 +118,9 @@ export function mountApp(
   const touchControlsMount = shell.querySelector<HTMLElement>(
     '[data-touch-controls]',
   );
+  const arenaInstructions = shell.querySelector<HTMLElement>(
+    '#arena-instructions',
+  );
 
   if (
     hudMount === null ||
@@ -126,7 +129,8 @@ export function mountApp(
     pauseButton === null ||
     restartButton === null ||
     canvas === null ||
-    touchControlsMount === null
+    touchControlsMount === null ||
+    arenaInstructions === null
   ) {
     throw new Error('SNAKISH interface controls could not be created.');
   }
@@ -153,6 +157,12 @@ export function mountApp(
     shell.dataset.highContrast = highContrast;
     shell.dataset.reducedMotion = reducedMotion;
   };
+  const publishWallInstructions = (): void => {
+    arenaInstructions.textContent =
+      preferences.wallMode === 'wrapAround'
+        ? 'Guide the snake to food. Edges wrap while body collisions end the run. Use arrow keys or WASD, swipe the arena, or use the D-pad. Press P to pause or resume.'
+        : 'Guide the snake to food. Wall or body collisions end the run. Use arrow keys or WASD, swipe the arena, or use the D-pad. Press P to pause or resume.';
+  };
 
   const hud = createHud();
   hudMount.replaceWith(hud);
@@ -163,6 +173,7 @@ export function mountApp(
   shell.append(dialogs.settingsDialog, dialogs.gameOverDialog, announcer);
 
   publishVisualPreferences();
+  publishWallInstructions();
   root.replaceChildren(shell);
   root.dataset.ready = 'true';
 
@@ -376,6 +387,25 @@ export function mountApp(
   };
   musicStyleControl.addEventListener('change', handleMusicStyleChange);
 
+  const wallModeControl = dialogs.settingsControls.wallMode;
+  const handleWallModeChange = (): void => {
+    if (
+      tornDown ||
+      !isWallMode(wallModeControl.value) ||
+      wallModeControl.value === preferences.wallMode
+    ) {
+      return;
+    }
+
+    preferences = Object.freeze({
+      ...preferences,
+      wallMode: wallModeControl.value,
+    });
+    savePreferences(storage, preferences);
+    publishWallInstructions();
+  };
+  wallModeControl.addEventListener('change', handleWallModeChange);
+
   let resolutionQuery: MediaQueryList | undefined;
   let resolutionDevicePixelRatio: number | undefined;
   const armResolutionQuery = (): void => {
@@ -440,7 +470,7 @@ export function mountApp(
 
       const previousScore = state.score;
       const previousStatus: GameState['status'] = state.status;
-      state = advanceSimulation(state, Math.random);
+      state = advanceSimulation(state, Math.random, preferences.wallMode);
       const scoreIncreased = state.score > previousScore;
       if (state.score > bestScore) {
         bestScore = state.score;
@@ -633,6 +663,7 @@ export function mountApp(
       control.removeEventListener('change', handleChange);
     }
     musicStyleControl.removeEventListener('change', handleMusicStyleChange);
+    wallModeControl.removeEventListener('change', handleWallModeChange);
     dialogs.teardown();
     scheduler.dispose();
     teardownInput();

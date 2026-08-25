@@ -11,20 +11,23 @@ import {
 } from '../../src/storage/preferences';
 
 const mixedPreferences: Preferences = Object.freeze({
-  version: 2,
+  version: 3,
   music: false,
   musicStyle: 'pixelDrift',
   soundEffects: true,
   reducedMotion: true,
   highContrast: false,
+  wallMode: 'wrapAround',
 });
 const canonicalMixedPayload =
+  '{"version":3,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"wrapAround"}';
+const exactV2Payload =
   '{"version":2,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false}';
 const exactV1Payload =
   '{"version":1,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":false}';
 
 describe('preferences storage contract', () => {
-  it('keeps the v1 key while defaulting to frozen Neon Pulse v2 preferences', () => {
+  it('keeps the v1 key while defaulting to frozen canonical v3 preferences', () => {
     const getItem = vi.fn(() => null);
     const loaded = loadPreferences({ getItem, setItem: vi.fn() });
 
@@ -36,12 +39,13 @@ describe('preferences storage contract', () => {
       'chillGrid',
     ]);
     expect(DEFAULT_PREFERENCES).toEqual({
-      version: 2,
+      version: 3,
       music: true,
       musicStyle: 'neonPulse',
       soundEffects: true,
       reducedMotion: false,
       highContrast: false,
+      wallMode: 'solid',
     });
     expect(Object.isFrozen(DEFAULT_PREFERENCES)).toBe(true);
     expect(loaded).toEqual(DEFAULT_PREFERENCES);
@@ -49,50 +53,76 @@ describe('preferences storage contract', () => {
     expect(getItem).toHaveBeenCalledWith(PREFERENCES_STORAGE_KEY);
   });
 
-  it('migrates the exact current v1 payload in memory without writing', () => {
-    const setItem = vi.fn();
-    const loaded = loadPreferences({ getItem: () => exactV1Payload, setItem });
+  it.each([
+    [
+      'v1',
+      exactV1Payload,
+      { ...mixedPreferences, musicStyle: 'neonPulse', wallMode: 'solid' },
+    ],
+    ['v2', exactV2Payload, { ...mixedPreferences, wallMode: 'solid' }],
+  ] as const)(
+    'migrates exact %s preferences in memory without writing',
+    (_version, serialized, expected) => {
+      const setItem = vi.fn();
+      const loaded = loadPreferences({ getItem: () => serialized, setItem });
 
-    expect(loaded).toEqual({ ...mixedPreferences, musicStyle: 'neonPulse' });
-    expect(Object.isFrozen(loaded)).toBe(true);
-    expect(setItem).not.toHaveBeenCalled();
-  });
-
-  it('migrates the exact v1 schema in alternate member order', () => {
-    expect(
-      loadPreferences({
-        getItem: () =>
-          '{"music":false,"version":1,"soundEffects":true,"reducedMotion":true,"highContrast":false}',
-        setItem: vi.fn(),
-      }),
-    ).toEqual({ ...mixedPreferences, musicStyle: 'neonPulse' });
-  });
-
-  it.each(MUSIC_STYLES)(
-    'strictly loads canonical v2 style %s',
-    (musicStyle) => {
-      const serialized = JSON.stringify({
-        version: 2,
-        music: false,
-        musicStyle,
-        soundEffects: true,
-        reducedMotion: true,
-        highContrast: false,
-      });
-      expect(
-        loadPreferences({ getItem: () => serialized, setItem: vi.fn() }),
-      ).toEqual({ ...mixedPreferences, musicStyle });
+      expect(loaded).toEqual(expected);
+      expect(Object.isFrozen(loaded)).toBe(true);
+      expect(setItem).not.toHaveBeenCalled();
     },
   );
 
-  it('accepts canonical v2 members in alternate order with legal whitespace', () => {
-    const loaded = loadPreferences({
-      getItem: () =>
-        '{\r\n "highContrast":false,"musicStyle":"pixelDrift", "reducedMotion":true,\n"soundEffects":true,"music":false,"version":2}',
-      setItem: vi.fn(),
-    });
-    expect(loaded).toEqual(mixedPreferences);
+  it.each([
+    [
+      'v1',
+      '{"music":false,"version":1,"soundEffects":true,"reducedMotion":true,"highContrast":false}',
+      { ...mixedPreferences, musicStyle: 'neonPulse', wallMode: 'solid' },
+    ],
+    [
+      'v2',
+      '{"highContrast":false,"musicStyle":"pixelDrift","reducedMotion":true,"soundEffects":true,"music":false,"version":2}',
+      { ...mixedPreferences, wallMode: 'solid' },
+    ],
+    [
+      'v3',
+      '{\r\n "wallMode":"wrapAround","highContrast":false,"musicStyle":"pixelDrift", "reducedMotion":true,\n"soundEffects":true,"music":false,"version":3}',
+      mixedPreferences,
+    ],
+  ] as const)(
+    'accepts exact %s members in alternate order',
+    (_version, serialized, expected) => {
+      expect(
+        loadPreferences({ getItem: () => serialized, setItem: vi.fn() }),
+      ).toEqual(expected);
+    },
+  );
+
+  it.each(MUSIC_STYLES)('roundtrips canonical v3 style %s', (musicStyle) => {
+    const preferences = { ...mixedPreferences, musicStyle };
+    const storageValue = JSON.stringify(preferences);
+    const setItem = vi.fn();
+
+    expect(loadPreferences({ getItem: () => storageValue, setItem })).toEqual(
+      preferences,
+    );
+    savePreferences({ getItem: vi.fn(), setItem }, preferences);
+    expect(setItem).toHaveBeenCalledWith(PREFERENCES_STORAGE_KEY, storageValue);
   });
+
+  it.each(['solid', 'wrapAround'] as const)(
+    'roundtrips canonical v3 wall mode %s',
+    (wallMode) => {
+      const preferences = { ...mixedPreferences, wallMode };
+      const serialized = JSON.stringify(preferences);
+      const setItem = vi.fn();
+
+      expect(loadPreferences({ getItem: () => serialized, setItem })).toEqual(
+        preferences,
+      );
+      savePreferences({ getItem: vi.fn(), setItem }, preferences);
+      expect(setItem).toHaveBeenCalledWith(PREFERENCES_STORAGE_KEY, serialized);
+    },
+  );
 
   it.each([
     ['malformed JSON', '{'],
@@ -100,24 +130,44 @@ describe('preferences storage contract', () => {
     ['null', 'null'],
     ['primitive', 'true'],
     [
-      'v1 extra member',
+      'v1 partial',
+      '{"version":1,"music":false,"soundEffects":true,"reducedMotion":true}',
+    ],
+    [
+      'v1 extra',
       '{"version":1,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":false,"extra":true}',
     ],
     [
+      'v2 partial',
+      '{"version":2,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true}',
+    ],
+    [
+      'v2 extra',
+      '{"version":2,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"solid"}',
+    ],
+    [
+      'v3 partial',
+      '{"version":3,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false}',
+    ],
+    [
+      'v3 extra',
+      '{"version":3,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"solid","extra":true}',
+    ],
+    [
+      'invalid version',
+      '{"version":4,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"solid"}',
+    ],
+    [
       'unknown style',
-      '{"version":2,"music":false,"musicStyle":"ambient","soundEffects":true,"reducedMotion":true,"highContrast":false}',
+      '{"version":3,"music":false,"musicStyle":"ambient","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"solid"}',
     ],
     [
-      'missing style',
-      '{"version":2,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":false}',
-    ],
-    [
-      'extra v2 member',
-      '{"version":2,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"extra":true}',
+      'unknown wall mode',
+      '{"version":3,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"portal"}',
     ],
     [
       'wrong boolean type',
-      '{"version":2,"music":0,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false}',
+      '{"version":3,"music":0,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"solid"}',
     ],
   ])('falls back atomically for %s', (_label, serialized) => {
     expect(
@@ -127,15 +177,19 @@ describe('preferences storage contract', () => {
 
   it.each([
     [
-      'version',
-      '{"version":1,"version":2,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false}',
+      'v3 version',
+      '{"version":2,"version":3,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"solid"}',
     ],
     [
-      'musicStyle',
-      '{"version":2,"music":false,"musicStyle":"neonPulse","musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false}',
+      'v3 wallMode',
+      '{"version":3,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"solid","wallMode":"wrapAround"}',
     ],
     [
-      'escaped musicStyle',
+      'v3 escaped wallMode',
+      '{"version":3,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"wallMode":"solid","wall\\u004dode":"wrapAround"}',
+    ],
+    [
+      'v2 escaped musicStyle',
       '{"version":2,"music":false,"musicStyle":"neonPulse","music\\u0053tyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false}',
     ],
     [
@@ -167,7 +221,7 @@ describe('preferences storage contract', () => {
         },
       }),
     ],
-  ])('returns defaults for %s', (_label, storage) => {
+  ])('returns usable defaults for %s', (_label, storage) => {
     expect(() =>
       loadPreferences(storage as PreferencesStorage | undefined),
     ).not.toThrow();
@@ -176,8 +230,8 @@ describe('preferences storage contract', () => {
     );
   });
 
-  it('writes one exact canonical v2 payload without reading or mutation', () => {
-    const getItem = vi.fn(() => exactV1Payload);
+  it('writes one exact canonical v3 payload without reading or mutation', () => {
+    const getItem = vi.fn(() => exactV2Payload);
     const setItem = vi.fn();
     const before = { ...mixedPreferences };
     savePreferences({ getItem, setItem }, mixedPreferences);
@@ -191,24 +245,31 @@ describe('preferences storage contract', () => {
     expect(mixedPreferences).toEqual(before);
   });
 
-  it('repairs migrated v1 data with one canonical v2 save after the first change', () => {
-    const setItem = vi.fn();
-    const storage = { getItem: () => exactV1Payload, setItem };
-    const migrated = loadPreferences(storage);
+  it.each([
+    ['v1', exactV1Payload],
+    ['v2', exactV2Payload],
+  ] as const)(
+    'repairs migrated %s data with canonical v3 on the next actual change',
+    (_version, serialized) => {
+      const setItem = vi.fn();
+      const storage = { getItem: () => serialized, setItem };
+      const migrated = loadPreferences(storage);
 
-    savePreferences(storage, { ...migrated, musicStyle: 'minimalBeat' });
+      savePreferences(storage, { ...migrated, wallMode: 'wrapAround' });
 
-    expect(setItem).toHaveBeenCalledOnce();
-    expect(setItem).toHaveBeenCalledWith(
-      PREFERENCES_STORAGE_KEY,
-      '{"version":2,"music":false,"musicStyle":"minimalBeat","soundEffects":true,"reducedMotion":true,"highContrast":false}',
-    );
-  });
+      expect(setItem).toHaveBeenCalledOnce();
+      expect(setItem).toHaveBeenCalledWith(
+        PREFERENCES_STORAGE_KEY,
+        expect.stringMatching(/^\{"version":3,.*"wallMode":"wrapAround"\}$/),
+      );
+    },
+  );
 
   it.each([
-    ['wrong version', { ...mixedPreferences, version: 1 }],
+    ['wrong version', { ...mixedPreferences, version: 2 }],
     ['unknown style', { ...mixedPreferences, musicStyle: 'ambient' }],
-    ['missing member', { version: 2, music: false }],
+    ['unknown wall mode', { ...mixedPreferences, wallMode: 'portal' }],
+    ['missing member', { version: 3, music: false }],
     ['extra member', { ...mixedPreferences, extra: true }],
     ['wrong boolean', { ...mixedPreferences, music: 'false' }],
     ['array', []],
