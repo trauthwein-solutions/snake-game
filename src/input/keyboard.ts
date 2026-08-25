@@ -36,7 +36,7 @@ function shouldKeepKeyboardInputNative(target: EventTarget | null): boolean {
 export function listenForKeyboard(
   target: Document,
   onDirection: (direction: Direction) => void,
-  onPauseToggle: () => void,
+  onPauseToggle: (event: KeyboardEvent) => void,
 ): () => void {
   const handleKeyDown = (event: KeyboardEvent): void => {
     if (
@@ -58,7 +58,7 @@ export function listenForKeyboard(
 
     if ((normalizedKey === 'p' || event.key === 'Escape') && !event.repeat) {
       event.preventDefault();
-      onPauseToggle();
+      onPauseToggle(event);
     }
   };
 

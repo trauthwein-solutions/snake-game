@@ -210,6 +210,7 @@ describe('keyboard input', () => {
     target.dispatch('keydown', event);
 
     expect(onPauseToggle).toHaveBeenCalledOnce();
+    expect(onPauseToggle).toHaveBeenCalledWith(event);
     expect(event.preventDefault).toHaveBeenCalledOnce();
   });
 
@@ -662,6 +663,25 @@ describe('swipe input', () => {
 });
 
 describe('input controller lifecycle', () => {
+  it('forwards the original pause keyboard event through the controller', () => {
+    const keyboardTarget = new FakeEventTarget();
+    const arena = new FakePointerTarget(keyboardTarget);
+    const { controls } = fakeTouchControls();
+    const onPauseToggle = vi.fn();
+    createInputController({
+      keyboardTarget: keyboardTarget as unknown as Document,
+      arena: arena as unknown as HTMLElement,
+      touchControls: controls,
+      onDirection: vi.fn(),
+      onPauseToggle,
+    });
+    const event = keyboardEvent({ key: 'P' });
+
+    keyboardTarget.dispatch('keydown', event);
+
+    expect(onPauseToggle).toHaveBeenCalledWith(event);
+  });
+
   it('normalizes D-pad activation and tears down every listener', () => {
     const keyboardTarget = new FakeEventTarget();
     const arena = new FakePointerTarget(keyboardTarget);

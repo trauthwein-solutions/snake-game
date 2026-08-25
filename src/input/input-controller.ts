@@ -8,7 +8,7 @@ export interface InputControllerOptions {
   readonly arena: HTMLElement;
   readonly touchControls: TouchControls;
   readonly onDirection: (direction: Direction) => void;
-  readonly onPauseToggle: () => void;
+  readonly onPauseToggle: (event: KeyboardEvent) => void;
 }
 
 export function createInputController({
