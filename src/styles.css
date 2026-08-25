@@ -324,11 +324,12 @@ h1 {
 }
 
 .setting select {
-  width: 8.5rem;
+  flex: 0 0 9.5rem;
+  width: 9.5rem;
   min-width: 0;
   max-width: 100%;
   min-height: 44px;
-  padding: 0.45rem 2rem 0.45rem 0.65rem;
+  padding: 0.45rem 1.25rem 0.45rem 0.4rem;
   border: 1px solid var(--line-bright);
   border-radius: 0.45rem;
   color: #eafffb;

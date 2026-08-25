@@ -425,18 +425,41 @@ test('320px persisted mixed high-contrast Settings stay unclipped with 44px cont
   const layout = await page.evaluate(() => {
     const dialog = document.querySelector<HTMLElement>('#settings-dialog');
     const settings = [...document.querySelectorAll<HTMLElement>('.setting')];
+    const musicStyle = document.querySelector<HTMLSelectElement>(
+      '#settings-dialog select',
+    );
     const controls = [
       ...document.querySelectorAll<HTMLElement>(
         '#settings-dialog button, #settings-dialog input, #settings-dialog select',
       ),
     ];
-    if (dialog === null) throw new Error('Expected Settings dialog.');
+    if (dialog === null || musicStyle === null) {
+      throw new Error('Expected Settings dialog and music style select.');
+    }
     const dialogBounds = dialog.getBoundingClientRect();
+    const musicStyleBounds = musicStyle.getBoundingClientRect();
+    const musicStyleSettingBounds = musicStyle
+      .closest<HTMLElement>('.setting')!
+      .getBoundingClientRect();
+    const musicStyleComputed = getComputedStyle(musicStyle);
     return {
       clientWidth: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,
       dialogLeft: dialogBounds.left,
       dialogRight: dialogBounds.right,
+      musicStyle: {
+        contentWidth:
+          musicStyleBounds.width -
+          parseFloat(musicStyleComputed.paddingLeft) -
+          parseFloat(musicStyleComputed.paddingRight) -
+          parseFloat(musicStyleComputed.borderLeftWidth) -
+          parseFloat(musicStyleComputed.borderRightWidth),
+        height: musicStyleBounds.height,
+        left: musicStyleBounds.left,
+        right: musicStyleBounds.right,
+        settingLeft: musicStyleSettingBounds.left,
+        settingRight: musicStyleSettingBounds.right,
+      },
       controls: controls.map((control) => {
         const bounds = control.getBoundingClientRect();
         return { width: bounds.width, height: bounds.height };
@@ -450,6 +473,16 @@ test('320px persisted mixed high-contrast Settings stay unclipped with 44px cont
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
   expect(layout.dialogLeft).toBeGreaterThanOrEqual(0);
   expect(layout.dialogRight).toBeLessThanOrEqual(layout.clientWidth);
+  expect(layout.musicStyle.contentWidth).toBeGreaterThanOrEqual(120);
+  expect(layout.musicStyle.height).toBeGreaterThanOrEqual(44);
+  expect(layout.musicStyle.left).toBeGreaterThanOrEqual(
+    layout.musicStyle.settingLeft,
+  );
+  expect(layout.musicStyle.right).toBeLessThanOrEqual(
+    layout.musicStyle.settingRight,
+  );
+  expect(layout.musicStyle.left).toBeGreaterThanOrEqual(layout.dialogLeft);
+  expect(layout.musicStyle.right).toBeLessThanOrEqual(layout.dialogRight);
   for (const control of layout.controls) {
     expect(control.width).toBeGreaterThanOrEqual(44);
     expect(control.height).toBeGreaterThanOrEqual(44);
