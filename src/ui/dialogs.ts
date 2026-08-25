@@ -47,6 +47,7 @@ function createSettingsDialog(
   dialog.className = 'dialog-card';
   dialog.id = 'settings-dialog';
   dialog.setAttribute('aria-labelledby', 'settings-title');
+  dialog.setAttribute('aria-describedby', 'settings-description');
   dialog.innerHTML = `
     <div class="dialog-heading">
       <div>
@@ -55,6 +56,9 @@ function createSettingsDialog(
       </div>
       <button class="icon-button" type="button" aria-label="Close settings">×</button>
     </div>
+    <p class="visually-hidden" id="settings-description">
+      Choose audio and visual preferences.
+    </p>
     <div class="settings-list">
       ${createSetting('Music', initialSettings.music)}
       ${createSetting('Sound effects', initialSettings.soundEffects)}
@@ -124,14 +128,15 @@ function createGameOverDialog(): HTMLDialogElement {
   dialog.className = 'dialog-card dialog-card--game-over';
   dialog.id = 'game-over-dialog';
   dialog.setAttribute('aria-labelledby', 'game-over-title');
+  dialog.setAttribute('aria-describedby', 'result-summary');
   dialog.innerHTML = `
     <p class="dialog-kicker">Run complete</p>
     <h2 id="game-over-title">Game over</h2>
-    <p class="final-score">
+    <p class="final-score" id="result-summary">
       <span>Final score</span>
       <strong data-testid="final-score-value" data-score="final">0</strong>
     </p>
-    <p class="new-best" data-testid="new-best" data-new-best hidden>New best!</p>
+    <p class="new-best" id="result-best" data-testid="new-best" data-new-best hidden>New best!</p>
     <div class="dialog-actions">
       <button class="button button--primary" type="button" data-action="play-again">
         Play again
@@ -190,6 +195,10 @@ export function createDialogs(
         status === 'completed' ? 'Grid complete' : 'Game over';
       finalScore.textContent = String(score);
       newBest.hidden = !isNewBest;
+      gameOverDialog.setAttribute(
+        'aria-describedby',
+        isNewBest ? 'result-summary result-best' : 'result-summary',
+      );
       if (!gameOverDialog.open) {
         gameOverDialog.showModal();
       }

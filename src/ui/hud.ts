@@ -9,7 +9,7 @@ export function createHud(): HTMLElement {
         <dd data-testid="score-value" data-score="current">0</dd>
       </div>
       <div class="scoreboard__item">
-        <dt>Best</dt>
+        <dt>Best score</dt>
         <dd data-testid="best-score-value" data-score="best">0</dd>
       </div>
     </dl>

@@ -74,7 +74,9 @@ export function mountApp(
       </div>
 
       <p class="instructions" id="arena-instructions">
-        Use arrow keys or swipe to guide the snake. WASD and the D-pad work too.
+        Guide the snake to food. Wall or body collisions end the run. Use arrow
+        keys or WASD, swipe the arena, or use the D-pad. Press P to pause or
+        resume.
       </p>
 
       <div data-touch-controls></div>
@@ -446,7 +448,7 @@ export function mountApp(
         gameAudio.play('food');
       }
 
-      if (scoreIncreased) {
+      if (scoreIncreased && terminalStatus === null) {
         announce(announcer, `Score ${state.score}.`);
       }
 
@@ -555,6 +557,7 @@ export function mountApp(
     state = applyCommand(state, { type: 'start' });
     dialogs.closeResult();
     updateStateView();
+    pauseButton.focus();
     presentationLoop.redraw();
     syncAudio(activation);
 

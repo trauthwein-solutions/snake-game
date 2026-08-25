@@ -7,6 +7,7 @@ import type { ArcadeFeedback } from '../../src/rendering/effects';
 type Listener = (event?: Event) => void;
 
 class FakeElement {
+  readonly attributes = new Map<string, string>();
   checked = false;
   className = '';
   dataset: Record<string, string> = {};
@@ -107,7 +108,9 @@ class FakeElement {
 
   replaceWith(): void {}
 
-  setAttribute(): void {}
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value);
+  }
 
   showModal(): void {
     this.open = true;
@@ -1520,6 +1523,7 @@ describe('mountApp gameplay lifecycle', () => {
   ] as const)('stops once and opens the %s result', (status, announcement) => {
     const { document } = mountHarness();
     document.playButton.click();
+    harness.announce.mockClear();
     harness.simulation.mockImplementationOnce((state: GameState) => ({
       ...state,
       status,
@@ -1535,6 +1539,7 @@ describe('mountApp gameplay lifecycle', () => {
     expect(harness.closeSettings.mock.invocationCallOrder[0]).toBeLessThan(
       harness.showResult.mock.invocationCallOrder[0] ?? 0,
     );
+    expect(harness.announce).toHaveBeenCalledOnce();
     expect(harness.announce).toHaveBeenCalledWith(
       expect.anything(),
       announcement,
@@ -1554,6 +1559,7 @@ describe('mountApp gameplay lifecycle', () => {
       gameHead: '10,10',
     });
     expect(harness.schedulerReset).toHaveBeenCalledOnce();
+    document.pauseButton.focus.mockClear();
 
     harness.simulation.mockImplementationOnce((state: GameState) => ({
       ...state,
@@ -1565,6 +1571,7 @@ describe('mountApp gameplay lifecycle', () => {
     expect(root.dataset.gameStatus).toBe('running');
     expect(root.dataset.gameScore).toBe('0');
     expect(harness.schedulerStart).toHaveBeenCalledTimes(2);
+    expect(document.pauseButton.focus).toHaveBeenCalledOnce();
 
     harness.simulation.mockImplementationOnce((state: GameState) => ({
       ...state,
@@ -1649,6 +1656,46 @@ describe('mountApp gameplay lifecycle', () => {
 });
 
 describe('gameplay UI helpers', () => {
+  it('provides concise nonvisual arena, score, settings, and result descriptions', async () => {
+    const { document } = mountHarness();
+    const shellMarkup = document.shell.innerHTML.replaceAll(/\s+/g, ' ');
+    expect(shellMarkup).toContain(
+      'Guide the snake to food. Wall or body collisions end the run.',
+    );
+    expect(shellMarkup).toContain('Press P to pause or resume.');
+
+    const { createDialogs } = await vi.importActual<
+      typeof import('../../src/ui/dialogs')
+    >('../../src/ui/dialogs');
+    const dialogs = createDialogs(
+      document.settingsButton as unknown as HTMLButtonElement,
+      {
+        version: 1,
+        music: true,
+        soundEffects: true,
+        reducedMotion: false,
+        highContrast: false,
+      },
+    );
+    const settings = dialogs.settingsDialog as unknown as FakeElement;
+    const result = dialogs.gameOverDialog as unknown as FakeElement;
+    expect(settings.attributes.get('aria-describedby')).toBe(
+      'settings-description',
+    );
+    expect(settings.innerHTML).toContain(
+      'Choose audio and visual preferences.',
+    );
+    expect(result.attributes.get('aria-describedby')).toBe('result-summary');
+    expect(result.innerHTML).toContain('id="result-summary"');
+
+    const { createHud } =
+      await vi.importActual<typeof import('../../src/ui/hud')>(
+        '../../src/ui/hud',
+      );
+    const hud = createHud() as unknown as FakeElement;
+    expect(hud.innerHTML).toContain('<dt>Best score</dt>');
+  });
+
   it.each([
     ['gameOver', 'Game over'],
     ['completed', 'Grid complete'],
@@ -1681,9 +1728,19 @@ describe('gameplay UI helpers', () => {
     expect(document.newBest.hidden).toBe(false);
     expect(document.dialogPlayAgainButton.focus).toHaveBeenCalledOnce();
     expect(dialogs.gameOverDialog.open).toBe(true);
+    expect(
+      (dialogs.gameOverDialog as unknown as FakeElement).attributes.get(
+        'aria-describedby',
+      ),
+    ).toBe('result-summary result-best');
 
     dialogs.showResult(status, 40, false);
     expect(document.newBest.hidden).toBe(true);
+    expect(
+      (dialogs.gameOverDialog as unknown as FakeElement).attributes.get(
+        'aria-describedby',
+      ),
+    ).toBe('result-summary');
   });
 
   it('closes settings narrowly and removes every dialog listener on teardown', async () => {

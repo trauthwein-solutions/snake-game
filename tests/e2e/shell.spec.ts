@@ -29,7 +29,7 @@ test('presents the accessible game shell without browser errors', async ({
   await expect(page.getByText('Enter the grid.')).toBeVisible();
 
   await expect(page.getByText('Score', { exact: true })).toBeVisible();
-  await expect(page.getByText('Best', { exact: true })).toBeVisible();
+  await expect(page.getByText('Best score', { exact: true })).toBeVisible();
   await expect(page.getByTestId('score-value')).toHaveText('0');
   await expect(page.getByTestId('best-score-value')).toHaveText('0');
 
@@ -37,7 +37,7 @@ test('presents the accessible game shell without browser errors', async ({
   await expect(arena).toBeVisible();
   await expect(arena).toHaveAttribute('aria-describedby', 'arena-instructions');
   await expect(page.locator('#arena-instructions')).toContainText(
-    'Use arrow keys or swipe to guide the snake.',
+    'Guide the snake to food.',
   );
 
   for (const name of ['Play', 'Pause', 'Restart', 'Settings']) {
