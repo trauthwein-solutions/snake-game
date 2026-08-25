@@ -13,8 +13,9 @@ const CLOCK_INSTALL_TIME = new Date('2026-01-01T00:00:00.000Z');
 const CLOCK_PAUSE_TIME = new Date('2026-01-01T00:01:00.000Z');
 const PREFERENCES_KEY = 'snakish.preferences.v1';
 const DEFAULT_PAYLOAD = {
-  version: 1,
+  version: 2,
   music: true,
+  musicStyle: 'neonPulse',
   soundEffects: true,
   reducedMotion: false,
   highContrast: false,
@@ -55,6 +56,7 @@ async function loadWithControlledClock(
 function settingsControls(page: Page) {
   return {
     music: page.getByRole('checkbox', { name: 'Music', exact: true }),
+    musicStyle: page.getByRole('combobox', { name: 'Music style' }),
     soundEffects: page.getByRole('checkbox', {
       name: 'Sound effects',
       exact: true,
@@ -116,6 +118,7 @@ test('defaults, immediate high contrast, and reload persistence preserve game st
   const controls = settingsControls(page);
 
   await expect(controls.music).toBeChecked();
+  await expect(controls.musicStyle).toHaveValue('neonPulse');
   await expect(controls.soundEffects).toBeChecked();
   await expect(controls.reducedMotion).not.toBeChecked();
   await expect(controls.highContrast).not.toBeChecked();
@@ -281,9 +284,41 @@ test('music and sound-effects preferences persist independently without game-sta
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const reloaded = settingsControls(page);
   await expect(reloaded.music).not.toBeChecked();
+  await expect(reloaded.musicStyle).toHaveValue('neonPulse');
   await expect(reloaded.soundEffects).not.toBeChecked();
   await expect(reloaded.reducedMotion).not.toBeChecked();
   await expect(reloaded.highContrast).not.toBeChecked();
+  expect(browserErrors).toEqual([]);
+});
+
+test('music style selection persists across mixed Music off, reload, style choice, and on', async ({
+  page,
+}) => {
+  const browserErrors = collectPageErrors(page);
+  await loadWithControlledClock(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  let controls = settingsControls(page);
+  await controls.music.uncheck();
+  await controls.musicStyle.selectOption('minimalBeat');
+  await expect(controls.music).not.toBeChecked();
+  await expect(controls.musicStyle).toHaveValue('minimalBeat');
+  await expect(
+    page.evaluate((key) => localStorage.getItem(key), PREFERENCES_KEY),
+  ).resolves.toBe(
+    '{"version":2,"music":false,"musicStyle":"minimalBeat","soundEffects":true,"reducedMotion":false,"highContrast":false}',
+  );
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  controls = settingsControls(page);
+  await expect(controls.music).not.toBeChecked();
+  await expect(controls.musicStyle).toHaveValue('minimalBeat');
+  await controls.music.check();
+  await expect(
+    page.evaluate((key) => localStorage.getItem(key), PREFERENCES_KEY),
+  ).resolves.toBe(
+    '{"version":2,"music":true,"musicStyle":"minimalBeat","soundEffects":true,"reducedMotion":false,"highContrast":false}',
+  );
   expect(browserErrors).toEqual([]);
 });
 
@@ -314,7 +349,7 @@ for (const [label, invalidPayload] of [
     await expect(
       page.evaluate((key) => localStorage.getItem(key), PREFERENCES_KEY),
     ).resolves.toBe(
-      '{"version":1,"music":false,"soundEffects":true,"reducedMotion":false,"highContrast":false}',
+      '{"version":2,"music":false,"musicStyle":"neonPulse","soundEffects":true,"reducedMotion":false,"highContrast":false}',
     );
     expect(browserErrors).toEqual([]);
   });
@@ -390,18 +425,41 @@ test('320px persisted mixed high-contrast Settings stay unclipped with 44px cont
   const layout = await page.evaluate(() => {
     const dialog = document.querySelector<HTMLElement>('#settings-dialog');
     const settings = [...document.querySelectorAll<HTMLElement>('.setting')];
+    const musicStyle = document.querySelector<HTMLSelectElement>(
+      '#settings-dialog select',
+    );
     const controls = [
       ...document.querySelectorAll<HTMLElement>(
-        '#settings-dialog button, #settings-dialog input',
+        '#settings-dialog button, #settings-dialog input, #settings-dialog select',
       ),
     ];
-    if (dialog === null) throw new Error('Expected Settings dialog.');
+    if (dialog === null || musicStyle === null) {
+      throw new Error('Expected Settings dialog and music style select.');
+    }
     const dialogBounds = dialog.getBoundingClientRect();
+    const musicStyleBounds = musicStyle.getBoundingClientRect();
+    const musicStyleSettingBounds = musicStyle
+      .closest<HTMLElement>('.setting')!
+      .getBoundingClientRect();
+    const musicStyleComputed = getComputedStyle(musicStyle);
     return {
       clientWidth: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,
       dialogLeft: dialogBounds.left,
       dialogRight: dialogBounds.right,
+      musicStyle: {
+        contentWidth:
+          musicStyleBounds.width -
+          parseFloat(musicStyleComputed.paddingLeft) -
+          parseFloat(musicStyleComputed.paddingRight) -
+          parseFloat(musicStyleComputed.borderLeftWidth) -
+          parseFloat(musicStyleComputed.borderRightWidth),
+        height: musicStyleBounds.height,
+        left: musicStyleBounds.left,
+        right: musicStyleBounds.right,
+        settingLeft: musicStyleSettingBounds.left,
+        settingRight: musicStyleSettingBounds.right,
+      },
       controls: controls.map((control) => {
         const bounds = control.getBoundingClientRect();
         return { width: bounds.width, height: bounds.height };
@@ -415,6 +473,16 @@ test('320px persisted mixed high-contrast Settings stay unclipped with 44px cont
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth);
   expect(layout.dialogLeft).toBeGreaterThanOrEqual(0);
   expect(layout.dialogRight).toBeLessThanOrEqual(layout.clientWidth);
+  expect(layout.musicStyle.contentWidth).toBeGreaterThanOrEqual(120);
+  expect(layout.musicStyle.height).toBeGreaterThanOrEqual(44);
+  expect(layout.musicStyle.left).toBeGreaterThanOrEqual(
+    layout.musicStyle.settingLeft,
+  );
+  expect(layout.musicStyle.right).toBeLessThanOrEqual(
+    layout.musicStyle.settingRight,
+  );
+  expect(layout.musicStyle.left).toBeGreaterThanOrEqual(layout.dialogLeft);
+  expect(layout.musicStyle.right).toBeLessThanOrEqual(layout.dialogRight);
   for (const control of layout.controls) {
     expect(control.width).toBeGreaterThanOrEqual(44);
     expect(control.height).toBeGreaterThanOrEqual(44);

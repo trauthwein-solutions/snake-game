@@ -86,12 +86,20 @@ test('settings dialog has labeled controls and restores focus when closed', asyn
     page.getByRole('checkbox', { name: 'Reduced motion', exact: true }),
     page.getByRole('checkbox', { name: 'High contrast', exact: true }),
   ];
+  const musicStyle = page.getByRole('combobox', { name: 'Music style' });
 
   for (const control of controls) {
     await expect(control).toHaveCount(1);
     await expect(control).toBeVisible();
   }
   await expect(controls[0]).toBeFocused();
+  await expect(musicStyle).toHaveValue('neonPulse');
+  await expect(musicStyle.locator('option')).toHaveText([
+    'Neon Pulse',
+    'Pixel Drift',
+    'Minimal Beat',
+    'Chill Grid',
+  ]);
 
   await page.getByRole('button', { name: 'Close settings' }).click();
   await expect(settingsDialog).toBeHidden();
@@ -138,7 +146,7 @@ test('interactive controls meet touch target minimums', async ({ page }) => {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
 
   const controls = page.locator(
-    'button:visible, input[type="checkbox"]:visible',
+    'button:visible, input[type="checkbox"]:visible, select:visible',
   );
   const count = await controls.count();
   expect(count).toBeGreaterThan(0);

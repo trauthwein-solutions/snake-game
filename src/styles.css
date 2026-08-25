@@ -49,7 +49,8 @@ button {
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
@@ -322,6 +323,25 @@ h1 {
   cursor: pointer;
 }
 
+.setting select {
+  flex: 0 0 9.5rem;
+  width: 9.5rem;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 0.45rem 1.25rem 0.45rem 0.4rem;
+  border: 1px solid var(--line-bright);
+  border-radius: 0.45rem;
+  color: #eafffb;
+  background: #08141c;
+  font: inherit;
+  cursor: pointer;
+}
+
+.setting--select {
+  gap: 0.5rem;
+}
+
 .dialog-card--game-over {
   text-align: center;
 }
@@ -390,6 +410,7 @@ h1 {
 .app-shell[data-high-contrast='true'] .arena-canvas,
 .app-shell[data-high-contrast='true'] .dialog-card,
 .app-shell[data-high-contrast='true'] .setting,
+.app-shell[data-high-contrast='true'] .setting select,
 .app-shell[data-high-contrast='true'] .button,
 .app-shell[data-high-contrast='true'] .icon-button,
 .app-shell[data-high-contrast='true'] .dpad__button {
@@ -414,7 +435,8 @@ h1 {
 }
 
 .app-shell[data-high-contrast='true'] button:focus-visible,
-.app-shell[data-high-contrast='true'] input:focus-visible {
+.app-shell[data-high-contrast='true'] input:focus-visible,
+.app-shell[data-high-contrast='true'] select:focus-visible {
   outline-color: #00ffff;
 }
 

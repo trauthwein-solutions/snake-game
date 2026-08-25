@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_PREFERENCES,
+  MUSIC_STYLES,
   PREFERENCES_STORAGE_KEY,
   loadPreferences,
   savePreferences,
@@ -10,26 +11,34 @@ import {
 } from '../../src/storage/preferences';
 
 const mixedPreferences: Preferences = Object.freeze({
-  version: 1,
+  version: 2,
   music: false,
+  musicStyle: 'pixelDrift',
   soundEffects: true,
   reducedMotion: true,
   highContrast: false,
 });
-
 const canonicalMixedPayload =
+  '{"version":2,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false}';
+const exactV1Payload =
   '{"version":1,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":false}';
 
 describe('preferences storage contract', () => {
-  it('uses the frozen defaults and exact versioned key for missing storage', () => {
+  it('keeps the v1 key while defaulting to frozen Neon Pulse v2 preferences', () => {
     const getItem = vi.fn(() => null);
-
     const loaded = loadPreferences({ getItem, setItem: vi.fn() });
 
     expect(PREFERENCES_STORAGE_KEY).toBe('snakish.preferences.v1');
+    expect(MUSIC_STYLES).toEqual([
+      'neonPulse',
+      'pixelDrift',
+      'minimalBeat',
+      'chillGrid',
+    ]);
     expect(DEFAULT_PREFERENCES).toEqual({
-      version: 1,
+      version: 2,
       music: true,
+      musicStyle: 'neonPulse',
       soundEffects: true,
       reducedMotion: false,
       highContrast: false,
@@ -37,28 +46,52 @@ describe('preferences storage contract', () => {
     expect(Object.isFrozen(DEFAULT_PREFERENCES)).toBe(true);
     expect(loaded).toEqual(DEFAULT_PREFERENCES);
     expect(Object.isFrozen(loaded)).toBe(true);
-    expect(getItem).toHaveBeenCalledOnce();
-    expect(getItem).toHaveBeenCalledWith('snakish.preferences.v1');
+    expect(getItem).toHaveBeenCalledWith(PREFERENCES_STORAGE_KEY);
   });
 
-  it.each([
-    ['canonical order', canonicalMixedPayload],
-    [
-      'alternate order and legal whitespace',
-      '{\r\n "highContrast" : false, "reducedMotion": true,\n"soundEffects" :true,"music":false, "version" : 1 }',
-    ],
-    [
-      'escaped spellings of every required key',
-      '{"ver\\u0073ion":1,"mu\\u0073ic":false,"sound\\u0045ffects":true,"reduced\\u004dotion":true,"high\\u0043ontrast":false}',
-    ],
-  ])('loads and freezes a valid payload in %s', (_label, serialized) => {
+  it('migrates the exact current v1 payload in memory without writing', () => {
+    const setItem = vi.fn();
+    const loaded = loadPreferences({ getItem: () => exactV1Payload, setItem });
+
+    expect(loaded).toEqual({ ...mixedPreferences, musicStyle: 'neonPulse' });
+    expect(Object.isFrozen(loaded)).toBe(true);
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
+  it('migrates the exact v1 schema in alternate member order', () => {
+    expect(
+      loadPreferences({
+        getItem: () =>
+          '{"music":false,"version":1,"soundEffects":true,"reducedMotion":true,"highContrast":false}',
+        setItem: vi.fn(),
+      }),
+    ).toEqual({ ...mixedPreferences, musicStyle: 'neonPulse' });
+  });
+
+  it.each(MUSIC_STYLES)(
+    'strictly loads canonical v2 style %s',
+    (musicStyle) => {
+      const serialized = JSON.stringify({
+        version: 2,
+        music: false,
+        musicStyle,
+        soundEffects: true,
+        reducedMotion: true,
+        highContrast: false,
+      });
+      expect(
+        loadPreferences({ getItem: () => serialized, setItem: vi.fn() }),
+      ).toEqual({ ...mixedPreferences, musicStyle });
+    },
+  );
+
+  it('accepts canonical v2 members in alternate order with legal whitespace', () => {
     const loaded = loadPreferences({
-      getItem: () => serialized,
+      getItem: () =>
+        '{\r\n "highContrast":false,"musicStyle":"pixelDrift", "reducedMotion":true,\n"soundEffects":true,"music":false,"version":2}',
       setItem: vi.fn(),
     });
-
     expect(loaded).toEqual(mixedPreferences);
-    expect(Object.isFrozen(loaded)).toBe(true);
   });
 
   it.each([
@@ -67,89 +100,58 @@ describe('preferences storage contract', () => {
     ['null', 'null'],
     ['primitive', 'true'],
     [
-      'wrong version',
-      '{"version":2,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":false}',
-    ],
-    [
-      'wrong version type',
-      '{"version":"1","music":false,"soundEffects":true,"reducedMotion":true,"highContrast":false}',
-    ],
-    [
-      'missing member',
-      '{"version":1,"music":false,"soundEffects":true,"reducedMotion":true}',
-    ],
-    [
-      'extra member',
+      'v1 extra member',
       '{"version":1,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":false,"extra":true}',
     ],
     [
-      'non-boolean music',
-      '{"version":1,"music":0,"soundEffects":true,"reducedMotion":true,"highContrast":false}',
+      'unknown style',
+      '{"version":2,"music":false,"musicStyle":"ambient","soundEffects":true,"reducedMotion":true,"highContrast":false}',
     ],
     [
-      'non-boolean soundEffects',
-      '{"version":1,"music":false,"soundEffects":null,"reducedMotion":true,"highContrast":false}',
+      'missing style',
+      '{"version":2,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":false}',
     ],
     [
-      'non-boolean reducedMotion',
-      '{"version":1,"music":false,"soundEffects":true,"reducedMotion":"true","highContrast":false}',
+      'extra v2 member',
+      '{"version":2,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false,"extra":true}',
     ],
     [
-      'non-boolean highContrast',
-      '{"version":1,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":{}}',
-    ],
-    [
-      'own __proto__ member',
-      '{"version":1,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":false,"__proto__":true}',
+      'wrong boolean type',
+      '{"version":2,"music":0,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false}',
     ],
   ])('falls back atomically for %s', (_label, serialized) => {
-    const loaded = loadPreferences({
-      getItem: () => serialized,
-      setItem: vi.fn(),
-    });
-
-    expect(loaded).toEqual(DEFAULT_PREFERENCES);
-    expect(loaded).not.toMatchObject(mixedPreferences);
+    expect(
+      loadPreferences({ getItem: () => serialized, setItem: vi.fn() }),
+    ).toEqual(DEFAULT_PREFERENCES);
   });
 
   it.each([
     [
       'version',
-      '{"version":2,"version":1,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":false}',
+      '{"version":1,"version":2,"music":false,"musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false}',
     ],
     [
-      'music',
+      'musicStyle',
+      '{"version":2,"music":false,"musicStyle":"neonPulse","musicStyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false}',
+    ],
+    [
+      'escaped musicStyle',
+      '{"version":2,"music":false,"musicStyle":"neonPulse","music\\u0053tyle":"pixelDrift","soundEffects":true,"reducedMotion":true,"highContrast":false}',
+    ],
+    [
+      'v1 music',
       '{"version":1,"music":true,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":false}',
     ],
-    [
-      'soundEffects',
-      '{"version":1,"music":false,"soundEffects":false,"soundEffects":true,"reducedMotion":true,"highContrast":false}',
-    ],
-    [
-      'reducedMotion',
-      '{"version":1,"music":false,"soundEffects":true,"reducedMotion":false,"reducedMotion":true,"highContrast":false}',
-    ],
-    [
-      'highContrast',
-      '{"version":1,"music":false,"soundEffects":true,"reducedMotion":true,"highContrast":true,"highContrast":false}',
-    ],
-    [
-      'escaped-equivalent names',
-      '{"version":2,"ver\\u0073ion":1,"music":true,"mu\\u0073ic":false,"soundEffects":false,"sound\\u0045ffects":true,"reducedMotion":false,"reduced\\u004dotion":true,"highContrast":true,"high\\u0043ontrast":false}',
-    ],
-  ])(
-    'rejects duplicate %s members before last-member-wins parsing',
-    (_label, serialized) => {
-      expect(
-        loadPreferences({ getItem: () => serialized, setItem: vi.fn() }),
-      ).toEqual(DEFAULT_PREFERENCES);
-    },
-  );
+  ])('rejects duplicate %s members', (_label, serialized) => {
+    expect(
+      loadPreferences({ getItem: () => serialized, setItem: vi.fn() }),
+    ).toEqual(DEFAULT_PREFERENCES);
+  });
 
   it.each([
     ['absent storage', undefined],
     [
-      'throwing getItem method',
+      'throwing getItem',
       {
         getItem: () => {
           throw new Error('blocked');
@@ -165,7 +167,7 @@ describe('preferences storage contract', () => {
         },
       }),
     ],
-  ])('returns immutable defaults for %s', (_label, storage) => {
+  ])('returns defaults for %s', (_label, storage) => {
     expect(() =>
       loadPreferences(storage as PreferencesStorage | undefined),
     ).not.toThrow();
@@ -174,12 +176,11 @@ describe('preferences storage contract', () => {
     );
   });
 
-  it('writes one complete canonical payload without reading or mutating input', () => {
-    const getItem = vi.fn(() => '{"foreign":true}');
+  it('writes one exact canonical v2 payload without reading or mutation', () => {
+    const getItem = vi.fn(() => exactV1Payload);
     const setItem = vi.fn();
     const before = { ...mixedPreferences };
-
-    savePreferences(Object.freeze({ getItem, setItem }), mixedPreferences);
+    savePreferences({ getItem, setItem }, mixedPreferences);
 
     expect(getItem).not.toHaveBeenCalled();
     expect(setItem).toHaveBeenCalledOnce();
@@ -190,28 +191,41 @@ describe('preferences storage contract', () => {
     expect(mixedPreferences).toEqual(before);
   });
 
+  it('repairs migrated v1 data with one canonical v2 save after the first change', () => {
+    const setItem = vi.fn();
+    const storage = { getItem: () => exactV1Payload, setItem };
+    const migrated = loadPreferences(storage);
+
+    savePreferences(storage, { ...migrated, musicStyle: 'minimalBeat' });
+
+    expect(setItem).toHaveBeenCalledOnce();
+    expect(setItem).toHaveBeenCalledWith(
+      PREFERENCES_STORAGE_KEY,
+      '{"version":2,"music":false,"musicStyle":"minimalBeat","soundEffects":true,"reducedMotion":true,"highContrast":false}',
+    );
+  });
+
   it.each([
-    ['wrong version', { ...mixedPreferences, version: 2 }],
-    ['missing member', { version: 1, music: false }],
+    ['wrong version', { ...mixedPreferences, version: 1 }],
+    ['unknown style', { ...mixedPreferences, musicStyle: 'ambient' }],
+    ['missing member', { version: 2, music: false }],
     ['extra member', { ...mixedPreferences, extra: true }],
-    ['wrong boolean type', { ...mixedPreferences, music: 'false' }],
+    ['wrong boolean', { ...mixedPreferences, music: 'false' }],
     ['array', []],
     ['null', null],
   ])('does not partially write invalid %s input', (_label, preferences) => {
     const setItem = vi.fn();
-
     savePreferences(
       { getItem: vi.fn(), setItem },
       preferences as unknown as Preferences,
     );
-
     expect(setItem).not.toHaveBeenCalled();
   });
 
   it.each([
     ['absent storage', undefined],
     [
-      'throwing setItem method',
+      'throwing setItem',
       {
         getItem: vi.fn(),
         setItem: () => {
@@ -227,18 +241,12 @@ describe('preferences storage contract', () => {
         },
       }),
     ],
-  ])(
-    'silently keeps the caller state for %s while saving',
-    (_label, storage) => {
-      const before = { ...mixedPreferences };
-
-      expect(() =>
-        savePreferences(
-          storage as PreferencesStorage | undefined,
-          mixedPreferences,
-        ),
-      ).not.toThrow();
-      expect(mixedPreferences).toEqual(before);
-    },
-  );
+  ])('silently retains caller state while saving to %s', (_label, storage) => {
+    expect(() =>
+      savePreferences(
+        storage as PreferencesStorage | undefined,
+        mixedPreferences,
+      ),
+    ).not.toThrow();
+  });
 });

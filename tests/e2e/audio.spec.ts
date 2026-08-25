@@ -28,6 +28,7 @@ interface AudioDiagnostics {
   readonly sourceCount: number;
   readonly musicStartCount: number;
   readonly activeMusicCount: number;
+  readonly maxActiveMusicCount: number;
   readonly activeEffectCount: number;
   readonly maxActiveEffectCount: number;
   readonly closeCount: number;
@@ -52,6 +53,7 @@ async function installAudioDiagnostics(
       sourceCount: 0,
       musicStartCount: 0,
       activeMusicCount: 0,
+      maxActiveMusicCount: 0,
       activeEffectCount: 0,
       maxActiveEffectCount: 0,
       closeCount: 0,
@@ -109,6 +111,10 @@ async function installAudioDiagnostics(
                         if (source.loop) {
                           data.musicStartCount += 1;
                           data.activeMusicCount += 1;
+                          data.maxActiveMusicCount = Math.max(
+                            data.maxActiveMusicCount,
+                            data.activeMusicCount,
+                          );
                           activeSource = 'music';
                         } else {
                           data.activeEffectCount += 1;
@@ -192,6 +198,7 @@ async function diagnostics(page: Page): Promise<AudioDiagnostics> {
           sourceCount: number;
           musicStartCount: number;
           activeMusicCount: number;
+          maxActiveMusicCount: number;
           closeCount: number;
           resumeCount: number;
           activeEffectCount: number;
@@ -348,6 +355,49 @@ test('Escape stays silent while ready; trusted P itself runs the context before 
   expect(result.gainValues[1]).toBe(0);
   expect(result.contextCount).toBe(1);
   expect(result.musicStartCount).toBe(1);
+  expect(browserErrors).toEqual([]);
+});
+
+test('rapid running style changes keep one context and one non-overlapping selected loop', async ({
+  page,
+}) => {
+  const browserErrors = collectPageErrors(page);
+  await installAudioDiagnostics(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const style = page.getByRole('combobox', { name: 'Music style' });
+
+  for (const value of [
+    'pixelDrift',
+    'minimalBeat',
+    'chillGrid',
+    'neonPulse',
+    'pixelDrift',
+  ]) {
+    await style.selectOption(value);
+  }
+
+  let result = await diagnostics(page);
+  expect(result.contextCount).toBe(1);
+  expect(result.musicStartCount).toBe(6);
+  expect(result.activeMusicCount).toBe(1);
+  expect(result.maxActiveMusicCount).toBe(1);
+
+  const music = page.getByRole('checkbox', { name: 'Music', exact: true });
+  await music.uncheck();
+  await style.selectOption('chillGrid');
+  result = await diagnostics(page);
+  expect(result.gainValues[0]).toBe(0);
+  expect(result.activeMusicCount).toBe(1);
+  expect(result.maxActiveMusicCount).toBe(1);
+
+  await music.check();
+  result = await diagnostics(page);
+  expect(result.contextCount).toBe(1);
+  expect(result.musicStartCount).toBe(7);
+  expect(result.activeMusicCount).toBe(1);
+  expect(result.gainValues[0]).toBeGreaterThan(0);
   expect(browserErrors).toEqual([]);
 });
 
