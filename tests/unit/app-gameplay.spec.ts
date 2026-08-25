@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { GameAudio, GameAudioFactory } from '../../src/audio/game-audio';
 import type { Direction, GameState } from '../../src/engine/model';
 import type { ArcadeFeedback } from '../../src/rendering/effects';
 
@@ -247,7 +248,7 @@ const harness = vi.hoisted(() => ({
   inputOptions: undefined as
     | {
         onDirection: (direction: Direction) => void;
-        onPauseToggle: () => void;
+        onPauseToggle: (event: KeyboardEvent) => void;
       }
     | undefined,
   inputTeardown: vi.fn(),
@@ -300,7 +301,7 @@ vi.mock('../../src/input/input-controller', () => ({
   createInputController: vi.fn(
     (options: {
       onDirection: (direction: Direction) => void;
-      onPauseToggle: () => void;
+      onPauseToggle: (event: KeyboardEvent) => void;
     }) => {
       harness.inputOptions = options;
       return harness.inputTeardown;
@@ -400,13 +401,26 @@ function movingState(state: GameState): GameState {
   };
 }
 
-function mountHarness(configure?: (document: FakeDocument) => void) {
+function mountHarness(
+  configure?: (document: FakeDocument) => void,
+  audioFactory?: GameAudioFactory,
+) {
   const document = new FakeDocument();
   configure?.(document);
   const root = new FakeElement('div', document);
   vi.stubGlobal('document', document);
-  const teardown = mountApp(root as unknown as HTMLElement);
+  const teardown = mountApp(root as unknown as HTMLElement, audioFactory);
   return { document, root, teardown };
+}
+
+function fakeAudio() {
+  const audio: GameAudio = {
+    sync: vi.fn(),
+    play: vi.fn(),
+    dispose: vi.fn(),
+  };
+  const factory = vi.fn(() => audio);
+  return { audio, factory };
 }
 
 function renderFeedback(timestampMs = 0): ArcadeFeedback | undefined {
@@ -641,6 +655,232 @@ describe('mountApp gameplay lifecycle', () => {
     expect(harness.presentationOptions?.prefersReducedMotion()).toBe(false);
     expect(harness.presentationSync).toHaveBeenCalledTimes(4);
     expect(document.defaultView.localStorage.setItem).toHaveBeenCalledTimes(2);
+  });
+
+  it('forwards eligible activations and increments run identity without replacing audio', () => {
+    const { audio, factory } = fakeAudio();
+    const { document } = mountHarness(undefined, factory);
+    const playActivation = new Event('click');
+    const restartActivation = new Event('click');
+    const playAgainActivation = new Event('click');
+
+    expect(factory).toHaveBeenCalledOnce();
+    expect(audio.sync).toHaveBeenCalledWith({
+      status: 'ready',
+      runId: 0,
+      musicEnabled: true,
+      soundEffectsEnabled: true,
+    });
+
+    document.playButton.dispatchEvent(playActivation);
+    document.restartButton.dispatchEvent(restartActivation);
+    dialogElements.playAgainButton?.dispatchEvent(playAgainActivation);
+
+    expect(factory).toHaveBeenCalledOnce();
+    expect(audio.sync).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ status: 'running', runId: 1 }),
+      playActivation,
+    );
+    expect(audio.sync).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ status: 'running', runId: 2 }),
+      restartActivation,
+    );
+    expect(audio.sync).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({ status: 'running', runId: 3 }),
+      playAgainActivation,
+    );
+  });
+
+  it('syncs before manual cues and never offers Escape as audio activation', () => {
+    const { audio, factory } = fakeAudio();
+    const { document } = mountHarness(undefined, factory);
+    document.playButton.dispatchEvent(new Event('click'));
+    vi.mocked(audio.sync).mockClear();
+    vi.mocked(audio.play).mockClear();
+    const pauseActivation = new Event('click');
+    const pActivation = { key: 'p' } as KeyboardEvent;
+    const escape = { key: 'Escape' } as KeyboardEvent;
+
+    document.pauseButton.dispatchEvent(pauseActivation);
+    harness.inputOptions?.onPauseToggle(pActivation);
+    harness.inputOptions?.onPauseToggle(escape);
+
+    expect(vi.mocked(audio.sync).mock.calls).toEqual([
+      [
+        expect.objectContaining({ status: 'paused', runId: 1 }),
+        pauseActivation,
+      ],
+      [expect.objectContaining({ status: 'running', runId: 1 }), pActivation],
+      [expect.objectContaining({ status: 'paused', runId: 1 })],
+    ]);
+    expect(vi.mocked(audio.play).mock.calls).toEqual([
+      ['pause'],
+      ['resume'],
+      ['pause'],
+    ]);
+    for (let index = 0; index < 3; index += 1) {
+      expect(
+        vi.mocked(audio.sync).mock.invocationCallOrder[index],
+      ).toBeLessThan(
+        vi.mocked(audio.play).mock.invocationCallOrder[index] ?? 0,
+      );
+    }
+  });
+
+  it('allows trusted P to unlock while ready but never allows Escape', () => {
+    const { audio, factory } = fakeAudio();
+    mountHarness(undefined, factory);
+    vi.mocked(audio.sync).mockClear();
+    const pActivation = { key: 'p' } as KeyboardEvent;
+
+    harness.inputOptions?.onPauseToggle(pActivation);
+    harness.inputOptions?.onPauseToggle({ key: 'Escape' } as KeyboardEvent);
+
+    expect(vi.mocked(audio.sync).mock.calls).toEqual([
+      [expect.objectContaining({ status: 'ready', runId: 0 }), pActivation],
+    ]);
+    expect(audio.play).not.toHaveBeenCalled();
+  });
+
+  it('offers only the original settings click as activation and persists on change', () => {
+    const { audio, factory } = fakeAudio();
+    const { document } = mountHarness(undefined, factory);
+    const controls = dialogElements.settingsControls;
+    if (controls === undefined) throw new Error('Expected Settings controls.');
+    vi.mocked(audio.sync).mockClear();
+    document.defaultView.localStorage.setItem.mockClear();
+    const click = new Event('click');
+    const change = new Event('change');
+
+    controls.music.checked = false;
+    controls.music.dispatchEvent(click);
+    controls.music.dispatchEvent(change);
+
+    expect(vi.mocked(audio.sync).mock.calls).toEqual([
+      [
+        expect.objectContaining({
+          musicEnabled: false,
+          soundEffectsEnabled: true,
+        }),
+        click,
+      ],
+      [
+        expect.objectContaining({
+          musicEnabled: false,
+          soundEffectsEnabled: true,
+        }),
+      ],
+    ]);
+    expect(document.defaultView.localStorage.setItem).toHaveBeenCalledOnce();
+  });
+
+  it('keeps automatic pause silent and audio toggles independent with no reduced-motion coupling', () => {
+    const { audio, factory } = fakeAudio();
+    const { document } = mountHarness(undefined, factory);
+    document.playButton.dispatchEvent(new Event('click'));
+    vi.mocked(audio.sync).mockClear();
+    vi.mocked(audio.play).mockClear();
+
+    document.hidden = true;
+    document.dispatch('visibilitychange');
+    expect(audio.sync).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'paused' }),
+    );
+    expect(audio.play).not.toHaveBeenCalled();
+
+    const controls = dialogElements.settingsControls;
+    if (controls === undefined) throw new Error('Expected Settings controls.');
+    const musicClick = new Event('click');
+    controls.music.checked = false;
+    controls.music.dispatchEvent(musicClick);
+    controls.music.dispatchEvent(new Event('change'));
+    expect(audio.sync).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        musicEnabled: false,
+        soundEffectsEnabled: true,
+      }),
+    );
+
+    const callsBeforeMotion = vi.mocked(audio.sync).mock.calls.length;
+    controls.reducedMotion.checked = true;
+    controls.reducedMotion.dispatchEvent(new Event('change'));
+    expect(audio.sync).toHaveBeenCalledTimes(callsBeforeMotion);
+
+    const effectsClick = new Event('click');
+    controls.soundEffects.checked = false;
+    controls.soundEffects.dispatchEvent(effectsClick);
+    controls.soundEffects.dispatchEvent(new Event('change'));
+    expect(audio.sync).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        musicEnabled: false,
+        soundEffectsEnabled: false,
+      }),
+    );
+  });
+
+  it.each(['gameOver', 'completed'] as const)(
+    'drops callback unlocks and lets a coincident %s cue suppress food',
+    (terminalStatus) => {
+      const { audio, factory } = fakeAudio();
+      const { document } = mountHarness(undefined, factory);
+      document.playButton.dispatchEvent(new Event('click'));
+      vi.mocked(audio.sync).mockClear();
+      vi.mocked(audio.play).mockClear();
+      harness.simulation
+        .mockImplementationOnce((state: GameState) => ({
+          ...movingState(state),
+          score: 10,
+        }))
+        .mockImplementationOnce((state: GameState) => ({
+          ...state,
+          status: terminalStatus,
+          score: 20,
+        }));
+
+      harness.onStep?.();
+      expect(audio.play).toHaveBeenLastCalledWith('food');
+      vi.mocked(audio.play).mockClear();
+      harness.onStep?.();
+
+      expect(audio.sync).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: terminalStatus, runId: 1 }),
+      );
+      expect(vi.mocked(audio.sync).mock.calls.at(-1)).toHaveLength(1);
+      expect(vi.mocked(audio.play).mock.calls).toEqual([[terminalStatus]]);
+      expect(
+        vi.mocked(audio.sync).mock.invocationCallOrder.at(-1),
+      ).toBeLessThan(
+        vi.mocked(audio.play).mock.invocationCallOrder.at(-1) ?? 0,
+      );
+    },
+  );
+
+  it('silences title return and disposes audio once during idempotent teardown', () => {
+    const { audio, factory } = fakeAudio();
+    const { document, teardown } = mountHarness(undefined, factory);
+    document.playButton.dispatchEvent(new Event('click'));
+    harness.simulation.mockImplementationOnce((state: GameState) => ({
+      ...state,
+      status: 'gameOver',
+    }));
+    harness.onStep?.();
+    vi.mocked(audio.sync).mockClear();
+    vi.mocked(audio.play).mockClear();
+
+    dialogElements.returnToTitleButton?.dispatchEvent(new Event('click'));
+
+    expect(audio.sync).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'ready', runId: 1 }),
+    );
+    expect(vi.mocked(audio.sync).mock.calls[0]).toHaveLength(1);
+    expect(audio.play).not.toHaveBeenCalled();
+
+    teardown();
+    teardown();
+    expect(audio.dispose).toHaveBeenCalledOnce();
   });
 
   it('does not write for scores below or tied with the persisted best', () => {
@@ -883,7 +1123,7 @@ describe('mountApp gameplay lifecycle', () => {
       'Game paused.',
     );
 
-    harness.inputOptions?.onPauseToggle();
+    harness.inputOptions?.onPauseToggle({ key: 'p' } as KeyboardEvent);
     expect(root.dataset.gameStatus).toBe('running');
     expectActionState(document, {
       playDisabled: true,
@@ -999,7 +1239,7 @@ describe('mountApp gameplay lifecycle', () => {
     harness.onStep?.();
 
     document.pauseButton.click();
-    harness.inputOptions?.onPauseToggle();
+    harness.inputOptions?.onPauseToggle({ key: 'p' } as KeyboardEvent);
     document.hidden = true;
     document.dispatch('visibilitychange');
     document.defaultView.dispatch('blur');
@@ -1387,7 +1627,7 @@ describe('mountApp gameplay lifecycle', () => {
     teardown();
     teardown();
     step?.();
-    pauseIntent?.();
+    pauseIntent?.({ key: 'p' } as KeyboardEvent);
     blur?.();
     visibility?.();
     document.pauseButton.click();

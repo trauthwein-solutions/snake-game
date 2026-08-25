@@ -1,3 +1,5 @@
+import type { GameAudioFactory, GameAudioSnapshot } from './audio/game-audio';
+import { createWebGameAudio } from './audio/web-audio';
 import { applyCommand, createInitialState } from './engine/game-engine';
 import type { Direction, GameState } from './engine/model';
 import {
@@ -43,7 +45,10 @@ const enteredTerminalStatus = (
   return null;
 };
 
-export function mountApp(root: HTMLElement): () => void {
+export function mountApp(
+  root: HTMLElement,
+  audioFactory: GameAudioFactory = createWebGameAudio,
+): () => void {
   const shell = document.createElement('main');
   shell.className = 'app-shell';
   shell.innerHTML = `
@@ -163,6 +168,23 @@ export function mountApp(root: HTMLElement): () => void {
   let runStartingBest: number | undefined;
   let feedback: ArcadeFeedback = EMPTY_ARCADE_FEEDBACK;
   let tornDown = false;
+  let runId = 0;
+  const gameAudio = audioFactory(view ?? undefined);
+  const audioSnapshot = (): GameAudioSnapshot => ({
+    status: state.status,
+    runId,
+    musicEnabled: preferences.music,
+    soundEffectsEnabled: preferences.soundEffects,
+  });
+  const syncAudio = (activation?: Event): void => {
+    if (activation === undefined) {
+      gameAudio.sync(audioSnapshot());
+    } else {
+      gameAudio.sync(audioSnapshot(), activation);
+    }
+  };
+
+  syncAudio();
 
   const clearFeedback = (): void => {
     feedback = EMPTY_ARCADE_FEEDBACK;
@@ -227,8 +249,8 @@ export function mountApp(root: HTMLElement): () => void {
     );
     state = applyCommand(state, { type: 'turn', direction });
   };
-  let applyManualPauseIntent = (): void => {};
-  const recordPauseIntent = (): void => {
+  let applyManualPauseIntent: (activation?: Event) => void = () => {};
+  const recordPauseIntent = (event?: Event): void => {
     if (tornDown) {
       return;
     }
@@ -236,7 +258,11 @@ export function mountApp(root: HTMLElement): () => void {
     root.dataset.pauseIntentCount = String(
       Number(root.dataset.pauseIntentCount ?? 0) + 1,
     );
-    applyManualPauseIntent();
+    const activation =
+      event !== undefined && 'key' in event && event.key === 'Escape'
+        ? undefined
+        : event;
+    applyManualPauseIntent(activation);
   };
   const teardownInput = createInputController({
     keyboardTarget: canvas.ownerDocument,
@@ -284,6 +310,21 @@ export function mountApp(root: HTMLElement): () => void {
   ] as const;
   const settingListeners = settingKeys.map((key) => {
     const control = dialogs.settingsControls[key];
+    const handleClick = (event: Event): void => {
+      if (tornDown || (key !== 'music' && key !== 'soundEffects')) {
+        return;
+      }
+
+      gameAudio.sync(
+        Object.freeze({
+          ...audioSnapshot(),
+          musicEnabled: key === 'music' ? control.checked : preferences.music,
+          soundEffectsEnabled:
+            key === 'soundEffects' ? control.checked : preferences.soundEffects,
+        }),
+        event,
+      );
+    };
     const handleChange = (): void => {
       if (tornDown || control.checked === preferences[key]) {
         return;
@@ -295,6 +336,10 @@ export function mountApp(root: HTMLElement): () => void {
       }) as Preferences;
       savePreferences(storage, preferences);
 
+      if (key === 'music' || key === 'soundEffects') {
+        syncAudio();
+      }
+
       if (key === 'reducedMotion') {
         publishVisualPreferences();
         presentationLoop.syncMotionPreference();
@@ -303,8 +348,9 @@ export function mountApp(root: HTMLElement): () => void {
         presentationLoop.redraw();
       }
     };
+    control.addEventListener('click', handleClick);
     control.addEventListener('change', handleChange);
-    return { control, handleChange };
+    return { control, handleChange, handleClick };
   });
 
   let resolutionQuery: MediaQueryList | undefined;
@@ -393,6 +439,13 @@ export function mountApp(root: HTMLElement): () => void {
       updateStateView();
       presentationLoop.redraw();
 
+      if (terminalStatus !== null) {
+        syncAudio();
+        gameAudio.play(terminalStatus);
+      } else if (scoreIncreased) {
+        gameAudio.play('food');
+      }
+
       if (scoreIncreased) {
         announce(announcer, `Score ${state.score}.`);
       }
@@ -417,7 +470,11 @@ export function mountApp(root: HTMLElement): () => void {
     },
   });
 
-  const pauseRunningGame = (announcement: string): void => {
+  const pauseRunningGame = (
+    announcement: string,
+    activation?: Event,
+    playCue = false,
+  ): void => {
     if (tornDown || state.status !== 'running') {
       return;
     }
@@ -426,10 +483,14 @@ export function mountApp(root: HTMLElement): () => void {
     scheduler.pause();
     updateStateView();
     presentationLoop.redraw();
+    syncAudio(activation);
+    if (playCue) {
+      gameAudio.play('pause');
+    }
     announce(announcer, announcement);
   };
 
-  const resumePausedGame = (): void => {
+  const resumePausedGame = (activation?: Event): void => {
     if (tornDown || state.status !== 'paused') {
       return;
     }
@@ -439,14 +500,18 @@ export function mountApp(root: HTMLElement): () => void {
     scheduler.start();
     updateStateView();
     presentationLoop.redraw();
+    syncAudio(activation);
+    gameAudio.play('resume');
     announce(announcer, 'Game resumed.');
   };
 
-  applyManualPauseIntent = (): void => {
+  applyManualPauseIntent = (activation?: Event): void => {
     if (state.status === 'running') {
-      pauseRunningGame('Game paused.');
+      pauseRunningGame('Game paused.', activation, true);
     } else if (state.status === 'paused') {
-      resumePausedGame();
+      resumePausedGame(activation);
+    } else if (activation !== undefined) {
+      syncAudio(activation);
     }
   };
 
@@ -460,34 +525,38 @@ export function mountApp(root: HTMLElement): () => void {
     pauseRunningGame('Game paused because the window lost focus.');
   };
 
-  const startReadyGame = (): void => {
+  const startReadyGame = (activation: Event): void => {
     if (tornDown || state.status !== 'ready') {
       return;
     }
 
     getGameplayView();
     runStartingBest = bestScore;
+    runId += 1;
     state = applyCommand(state, { type: 'start' });
     updateStateView();
+    syncAudio(activation);
     pauseButton.focus();
     presentationLoop.redraw();
     scheduler.start();
     announce(announcer, 'Game started.');
   };
 
-  const restartAndStart = (): void => {
+  const restartAndStart = (activation: Event): void => {
     if (tornDown) {
       return;
     }
 
     getGameplayView();
     runStartingBest = bestScore;
+    runId += 1;
     clearFeedback();
     state = applyCommand(state, { type: 'restart' });
     state = applyCommand(state, { type: 'start' });
     dialogs.closeResult();
     updateStateView();
     presentationLoop.redraw();
+    syncAudio(activation);
 
     if (scheduler.isRunning()) {
       scheduler.reset();
@@ -511,6 +580,7 @@ export function mountApp(root: HTMLElement): () => void {
     dialogs.closeResult();
     updateStateView();
     presentationLoop.redraw();
+    syncAudio();
     announce(announcer, 'Returned to title.');
     playButton.focus();
   };
@@ -528,12 +598,14 @@ export function mountApp(root: HTMLElement): () => void {
       return;
     }
     tornDown = true;
+    gameAudio.dispose();
     playButton.removeEventListener('click', startReadyGame);
     pauseButton.removeEventListener('click', recordPauseIntent);
     restartButton.removeEventListener('click', restartAndStart);
     dialogs.playAgainButton.removeEventListener('click', restartAndStart);
     dialogs.returnToTitleButton.removeEventListener('click', returnToTitle);
-    for (const { control, handleChange } of settingListeners) {
+    for (const { control, handleChange, handleClick } of settingListeners) {
+      control.removeEventListener('click', handleClick);
       control.removeEventListener('change', handleChange);
     }
     dialogs.teardown();
