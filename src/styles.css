@@ -19,6 +19,10 @@
   --cyan: #72f7e2;
   --lime: #b4f85f;
   --focus: #ffe66d;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 }
 
 * {
@@ -36,7 +40,12 @@ html {
 body {
   min-width: 0;
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0;
+}
+
+body:has(.dialog-card[open]) {
+  overflow: hidden;
 }
 
 button,
@@ -59,10 +68,15 @@ select:focus-visible {
   display: grid;
   width: min(100%, 43rem);
   min-height: 100vh;
+  min-height: 100dvh;
   margin-inline: auto;
-  padding: clamp(1rem, 3vw, 2rem);
+  padding: 0.75rem;
+  padding-top: max(0.75rem, var(--safe-top));
+  padding-right: max(0.75rem, var(--safe-right));
+  padding-bottom: max(0.75rem, var(--safe-bottom));
+  padding-left: max(0.75rem, var(--safe-left));
   place-content: center;
-  gap: clamp(1rem, 2.5vh, 1.5rem);
+  gap: clamp(0.5rem, 1vmin, 0.75rem);
 }
 
 .hero {
@@ -88,7 +102,7 @@ select:focus-visible {
 h1 {
   margin: 0.2rem 0;
   color: var(--cyan);
-  font-size: clamp(2.8rem, 12vw, 5rem);
+  font-size: clamp(2.5rem, 7vmin, 4rem);
   line-height: 0.95;
   letter-spacing: 0.09em;
   text-shadow: 0 0 1.5rem rgb(114 247 226 / 24%);
@@ -100,7 +114,7 @@ h1 {
 
 .game-panel {
   display: grid;
-  gap: 0.85rem;
+  gap: clamp(0.4rem, 0.8vmin, 0.65rem);
 }
 
 .scoreboard {
@@ -143,6 +157,9 @@ h1 {
 }
 
 .arena-frame {
+  width: min(100%, max(14rem, calc(100vh - 26rem)));
+  width: min(100%, max(14rem, calc(100dvh - 26rem)));
+  margin-inline: auto;
   padding: 0.4rem;
   border: 1px solid var(--line-bright);
   border-radius: 0.85rem;
@@ -255,14 +272,18 @@ h1 {
 }
 
 .dialog-card {
-  width: min(calc(100% - 1.5rem), 27rem);
-  max-height: calc(100vh - 1.5rem);
+  width: min(calc(100% - 1rem), 27rem);
+  max-width: calc(100vw - var(--safe-left) - var(--safe-right) - 1rem);
+  max-height: calc(100vh - 1rem);
+  max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 1rem);
   padding: 1.25rem;
   border: 1px solid var(--line-bright);
   border-radius: 0.9rem;
   color: #eafffb;
   background: #08141c;
   box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 70%);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .dialog-card::backdrop {
@@ -483,34 +504,185 @@ h1 {
   animation-iteration-count: 1;
 }
 
-@media (max-width: 30rem) {
+@media (orientation: portrait) and (max-width: 30rem) {
   .app-shell {
-    padding: 0.75rem;
-    place-content: start center;
+    padding: 0.35rem 0.5rem;
+    padding-top: max(0.35rem, var(--safe-top));
+    padding-right: max(0.5rem, var(--safe-right));
+    padding-bottom: max(0.35rem, var(--safe-bottom));
+    padding-left: max(0.5rem, var(--safe-left));
+    gap: 0.3rem;
   }
 
-  .game-actions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .button {
-    min-height: 52px;
-  }
-}
-
-@media (max-height: 48rem) and (min-width: 31rem) {
-  .app-shell {
-    width: min(100%, 35rem);
-    padding-block: 0.75rem;
-    gap: 0.65rem;
+  .eyebrow {
+    font-size: 0.56rem;
+    line-height: 1.15;
   }
 
   h1 {
-    font-size: 2.75rem;
+    margin-block: 0.05rem;
+    font-size: 2rem;
+    line-height: 0.95;
+  }
+
+  .subtitle {
+    font-size: 0.72rem;
+    line-height: 1.15;
+  }
+
+  .game-panel {
+    gap: 0.25rem;
+  }
+
+  .scoreboard__item {
+    padding: 0.25rem 0.55rem;
+  }
+
+  .scoreboard dt {
+    font-size: 0.6rem;
+  }
+
+  .scoreboard dd {
+    font-size: 1rem;
   }
 
   .arena-frame {
-    width: min(100%, 50vh);
-    margin-inline: auto;
+    width: min(100%, max(14rem, calc(100vh - 22.5rem)));
+    width: min(100%, max(14rem, calc(100dvh - 22.5rem)));
+    padding: 0.25rem;
+  }
+
+  .instructions {
+    font-size: 0.65rem;
+    line-height: 1.2;
+  }
+
+  .dpad {
+    grid-template: repeat(2, 44px) / repeat(3, 44px);
+    gap: 0.25rem;
+  }
+
+  .dpad__button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .game-actions {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.25rem;
+  }
+
+  .button {
+    min-height: 44px;
+    padding: 0.35rem 0.2rem;
+    font-size: 0.68rem;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 30rem) and (min-width: 31rem) {
+  .app-shell {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 20rem;
+    padding: 0.35rem 0.5rem;
+    padding-top: max(0.35rem, var(--safe-top));
+    padding-right: max(0.5rem, var(--safe-right));
+    padding-bottom: max(0.35rem, var(--safe-bottom));
+    padding-left: max(0.5rem, var(--safe-left));
+  }
+
+  .hero {
+    position: absolute;
+    z-index: 1;
+    top: max(0.35rem, var(--safe-top));
+    left: max(0.5rem, var(--safe-left));
+    width: 44%;
+  }
+
+  .eyebrow {
+    font-size: 0.52rem;
+    line-height: 1;
+  }
+
+  h1 {
+    margin-block: 0.05rem;
+    font-size: 1.75rem;
+    line-height: 0.95;
+  }
+
+  .subtitle {
+    font-size: 0.65rem;
+    line-height: 1.1;
+  }
+
+  .game-panel {
+    display: grid;
+    width: 100%;
+    height: 100%;
+    grid-template-columns: minmax(15.5rem, 0.9fr) minmax(0, 1fr);
+    grid-template-rows: 3.5rem auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'empty arena'
+      'scoreboard arena'
+      'instructions arena'
+      'instructions dpad'
+      'instructions actions';
+    gap: 0.3rem 0.5rem;
+    align-items: center;
+  }
+
+  .hud {
+    grid-area: scoreboard;
+  }
+
+  .scoreboard__item {
+    padding: 0.2rem 0.45rem;
+  }
+
+  .scoreboard dt {
+    font-size: 0.58rem;
+  }
+
+  .scoreboard dd {
+    font-size: 0.95rem;
+  }
+
+  .arena-frame {
+    grid-area: arena;
+    width: min(100%, max(9.5rem, calc(100vh - 10rem)));
+    width: min(100%, max(9.5rem, calc(100dvh - 10rem)));
+    padding: 0.25rem;
+  }
+
+  .instructions {
+    grid-area: instructions;
+    font-size: 0.62rem;
+    line-height: 1.2;
+  }
+
+  .dpad {
+    grid-area: dpad;
+    grid-template: repeat(2, 44px) / repeat(3, 44px);
+    gap: 0.25rem;
+  }
+
+  .dpad__button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .game-actions {
+    grid-area: actions;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.25rem;
+  }
+
+  .button {
+    min-height: 44px;
+    padding: 0.35rem 0.3rem;
+    font-size: 0.68rem;
   }
 }
