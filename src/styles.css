@@ -634,7 +634,7 @@ h1 {
     align-items: center;
   }
 
-  .scoreboard {
+  .hud {
     grid-area: scoreboard;
   }
 
