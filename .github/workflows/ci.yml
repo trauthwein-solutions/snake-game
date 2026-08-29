@@ -71,6 +71,27 @@ jobs:
       - name: Run end-to-end tests
         run: npm run test:e2e
 
+      - name: Bind responsive evidence to candidate
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p responsive-evidence
+          printf '%s\n' "$CANDIDATE_SHA" > responsive-evidence/candidate-sha.txt
+          {
+            printf '%s\n' 'Chromium desktop plus emulated touch/mobile browser evidence.'
+            printf '%s\n' 'The portrait-to-landscape transition is browser-emulated viewport evidence, not native-device orientation proof.'
+          } > responsive-evidence/evidence-scope.txt
+
+      - name: Upload responsive viewport evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: responsive-evidence-${{ env.CANDIDATE_SHA }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: responsive-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Upload Playwright failure artifacts
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
